@@ -1,0 +1,289 @@
+import * as db from './db.js';
+import { h, renderSide, sideText, hasText } from './content.js';
+import { parseCards, readFiles, saveSet, exportBackup, restoreBackup } from './import.js';
+import { Session, buildPool, isDue, dayNum } from './learn.js';
+
+const app = document.getElementById('app');
+const show = (...els) => { app.replaceChildren(...els); window.scrollTo(0, 0); };
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+};
+let keyHandler = null;
+document.addEventListener('keydown', (e) => keyHandler && keyHandler(e));
+
+// Tap any image to see it fullscreen.
+document.addEventListener('click', (e) => {
+  const img = e.target.closest && e.target.closest('img.zoomable');
+  if (!img) return;
+  const box = h('div', { class: 'lightbox', onclick: () => box.remove() }, h('img', { src: img.src, alt: '' }));
+  document.body.append(box);
+});
+
+function toast(msg) {
+  const t = h('div', { class: 'toast' }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 2600);
+}
+
+async function imageMap(setId) {
+  const map = new Map();
+  for (const im of await db.getImages(setId)) map.set(im.name.toLowerCase(), URL.createObjectURL(im.blob));
+  return map;
+}
+const revoke = (map) => map && map.forEach((u) => URL.revokeObjectURL(u));
+
+// ---------------------------------------------------------------- library
+async function libraryView() {
+  keyHandler = null;
+  const sets = (await db.getSets()).sort((a, b) => b.created - a.created);
+  const today = dayNum();
+  const dirSel = h('select', { onchange: (e) => store.set('dir', e.target.value) },
+    ...[['def', 'Definition'], ['term', 'Term'], ['mixed', 'Both']].map(([v, l]) =>
+      h('option', { value: v, selected: store.get('dir', 'def') === v }, l)));
+
+  const list = h('div', { class: 'list' });
+  for (const s of sets) {
+    const cards = await db.getCards(s.id);
+    const due = cards.filter((c) => isDue(c, today)).length;
+    const fresh = cards.filter((c) => c.state === 'new').length;
+    const todo = due + Math.min(fresh, 15);
+    list.append(h('div', { class: 'card set' },
+      h('div', { class: 'set-head' },
+        h('div', {},
+          h('div', { class: 'set-name' }, s.name),
+          h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new`)),
+        h('button', {
+          class: 'icon', 'aria-label': 'Delete set',
+          onclick: async () => { if (confirm(`Delete "${s.name}" and its progress?`)) { await db.deleteSet(s.id); libraryView(); } },
+        }, '🗑')),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', disabled: todo === 0, onclick: () => study(s, 'learn') },
+          todo ? `Learn (${todo})` : 'All done today'),
+        h('button', { class: 'btn', onclick: () => study(s, 'practice') }, 'Practice all'))));
+  }
+
+  const backupIn = h('input', { type: 'file', accept: '.zip', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const r = await readFiles([f]);
+      if (!r.backup) return toast('That zip is not a backup file');
+      const n = await restoreBackup(r.backup);
+      toast(`Restored ${n} set${n === 1 ? '' : 's'}`); libraryView();
+    } catch (err) { toast('Restore failed: ' + err.message); }
+  } });
+
+  show(
+    h('header', { class: 'topbar' }, h('h1', {}, 'Spaced Cards'),
+      h('button', { class: 'btn primary small', onclick: importView }, '+ Import')),
+    h('main', { class: 'page' },
+      sets.length ? h('label', { class: 'inline' }, 'Answer with ', dirSel) : null,
+      sets.length ? list : h('div', { class: 'empty' },
+        h('p', {}, '👋 No sets yet.'),
+        h('p', { class: 'muted' }, 'Import a Quizlet export (text file) or a .zip with images. Tap Import to start.'),
+        h('button', { class: 'btn primary', onclick: importView }, 'Import a set')),
+      sets.length ? h('div', { class: 'row footer-row' },
+        h('button', { class: 'btn small', onclick: async () => {
+          const blob = await exportBackup();
+          const a = h('a', { href: URL.createObjectURL(blob), download: `spaced-cards-backup-${new Date().toISOString().slice(0, 10)}.zip` });
+          document.body.append(a); a.click(); a.remove();
+        } }, 'Save backup'),
+        h('button', { class: 'btn small', onclick: () => backupIn.click() }, 'Restore backup')) : null,
+      !sets.length ? h('div', { class: 'row footer-row' }, h('button', { class: 'btn small', onclick: () => backupIn.click() }, 'Restore backup')) : null,
+      backupIn));
+}
+
+// ----------------------------------------------------------------- import
+function importView() {
+  keyHandler = null;
+  const st = { images: new Map(), previewUrls: new Map() };
+  const name = h('input', { type: 'text', placeholder: 'Set name', autocomplete: 'off' });
+  const text = h('textarea', { rows: 6, placeholder: 'Paste your Quizlet export here, or choose a file…', spellcheck: 'false' });
+  const preview = h('div', { class: 'preview' });
+  const saveBtn = h('button', { class: 'btn primary', disabled: true }, 'Save set');
+  const info = h('div', { class: 'muted' });
+
+  const termSel = sepSelect('Between term and definition', [['auto', 'Auto'], ['\\t', 'Tab'], [',', 'Comma'], [';', 'Semicolon'], [' - ', 'Dash ( - )']]);
+  const cardSel = sepSelect('Between cards', [['auto', 'New line'], [';', 'Semicolon'], ['\\n\\n', 'Blank line']]);
+
+  function sepSelect(label, opts) {
+    const sel = h('select', { onchange: refresh }, ...opts.map(([v, l]) => h('option', { value: v }, l)),
+      h('option', { value: 'custom' }, 'Custom…'));
+    const custom = h('input', { type: 'text', placeholder: 'separator', hidden: true, oninput: refresh });
+    sel.addEventListener('change', () => { custom.hidden = sel.value !== 'custom'; });
+    return { el: h('label', { class: 'field' }, label, sel, custom), value: () => (sel.value === 'custom' ? custom.value : sel.value) };
+  }
+
+  function refresh() {
+    st.previewUrls.forEach((u) => URL.revokeObjectURL(u));
+    st.previewUrls = new Map([...st.images].map(([k, v]) => [k, URL.createObjectURL(v.blob)]));
+    const pairs = parseCards(text.value, termSel.value(), cardSel.value());
+    st.pairs = pairs;
+    preview.replaceChildren();
+    saveBtn.disabled = !pairs.length || !name.value.trim();
+    info.textContent = text.value.trim()
+      ? `${pairs.length} cards found${st.images.size ? ` · ${st.images.size} images` : ''}`
+      : (st.images.size ? `${st.images.size} images loaded` : '');
+    for (const [a, b] of pairs.slice(0, 4)) {
+      const n = (s) => (/^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|avif)(\?\S*)?$/i.test(s.trim()) || st.images.has(s.trim().toLowerCase())) ? `[img:${s.trim()}]` : s;
+      preview.append(h('div', { class: 'card prev-card' }, renderSide(n(a), st.previewUrls), h('hr'), renderSide(n(b), st.previewUrls)));
+    }
+  }
+
+  const fileIn = h('input', { type: 'file', accept: '.txt,.csv,.tsv,.zip,image/*', multiple: true, hidden: true, onchange: async (e) => {
+    const files = [...e.target.files]; if (!files.length) return;
+    try {
+      const r = await readFiles(files);
+      if (r.backup) {
+        const n = await restoreBackup(r.backup);
+        toast(`Restored ${n} set${n === 1 ? '' : 's'}`); return libraryView();
+      }
+      r.images.forEach((v, k) => st.images.set(k, v));
+      if (r.text != null) {
+        text.value = r.text;
+        if (!name.value) name.value = (r.textName || files[0].name).replace(/\.[^.]+$/, '');
+      }
+      refresh();
+    } catch (err) { toast('Could not read file: ' + err.message); }
+    e.target.value = '';
+  } });
+
+  text.addEventListener('input', refresh);
+  name.addEventListener('input', refresh);
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    await saveSet(name.value.trim(), st.pairs, st.images);
+    st.previewUrls.forEach((u) => URL.revokeObjectURL(u));
+    toast('Set saved'); libraryView();
+  });
+
+  show(
+    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: libraryView }, '←'), h('h1', {}, 'Import set'), h('span')),
+    h('main', { class: 'page stack' },
+      h('button', { class: 'btn primary', onclick: () => fileIn.click() }, '📁 Choose file(s)'),
+      h('p', { class: 'muted small-text' }, 'Pick a .txt/.csv export, a .zip (text file + images), or a text file together with image files.'),
+      fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
+}
+
+// ------------------------------------------------------------------ study
+async function study(set, mode) {
+  const cards = await db.getCards(set.id);
+  const imgs = await imageMap(set.id);
+  const pool = buildPool(cards, mode, dayNum());
+  if (!pool.length) { revoke(imgs); return toast('Nothing to study'); }
+  const session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), onCard: (c) => db.putMany('cards', [c]) });
+  const exit = () => { keyHandler = null; revoke(imgs); libraryView(); };
+
+  const topbar = () => h('header', { class: 'topbar' },
+    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'),
+    h('div', { class: 'progress', 'aria-label': 'Progress' }, h('div', { style: `width:${(session.mastered / session.total) * 100}%` })),
+    h('span', { class: 'muted count' }, `${session.mastered}/${session.total}`));
+
+  function nextRound() {
+    if (!session.startRound()) return finish();
+    question();
+  }
+
+  function roundSummary() {
+    keyHandler = (e) => e.key === 'Enter' && nextRound();
+    const rows = session.items.map((it) => h('div', { class: 'card sum-row' },
+      h('div', { class: 'grow' }, renderSide(session.prompt(it), imgs)),
+      h('span', { class: it.misses ? 'bad-pill' : 'ok-pill' }, it.misses ? `${it.misses} miss${it.misses > 1 ? 'es' : ''}` : '✓')));
+    show(topbar(),
+      h('main', { class: 'page stack' }, h('h2', {}, `Round ${session.round} complete 🎉`), ...rows),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: nextRound }, session.pending.length ? 'Next round' : 'Finish')));
+  }
+
+  function finish() {
+    keyHandler = null;
+    show(topbar(),
+      h('main', { class: 'page stack center' },
+        h('div', { class: 'big' }, '🏁'), h('h2', {}, 'Session complete'),
+        h('p', {}, `${session.total} cards studied · ${session.perfect} correct first time`),
+        mode === 'learn' ? h('p', { class: 'muted' }, 'Your next reviews have been scheduled.') : null),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: exit }, 'Done')));
+  }
+
+  function question() {
+    if (session.roundDone) return roundSummary();
+    const it = session.current;
+    const kind = session.kind(it);
+    const label = it.dir === 'def' ? 'Term' : 'Definition';
+    const answerLabel = it.dir === 'def' ? 'Definition' : 'Term';
+    const answer = session.answer(it);
+    const promptBox = h('div', { class: 'card prompt' }, h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
+    const stage = h('div', { class: 'stage' });
+    const actions = h('div', { class: 'actions' });
+    const stack = h('main', { class: 'page stack' }, promptBox, stage);
+    show(topbar(), stack, actions);
+
+    const proceed = (ok, delay) => {
+      session.submit(ok);
+      keyHandler = null;
+      if (delay) setTimeout(question, delay); else question();
+    };
+    const waitContinue = (ok) => {
+      actions.replaceChildren(h('button', { class: 'btn primary', onclick: () => proceed(ok) }, 'Continue'));
+      keyHandler = (e) => e.key === 'Enter' && proceed(ok);
+    };
+
+    if (kind === 'mc') {
+      stage.append(h('div', { class: 'label' }, `Choose the ${answerLabel.toLowerCase()}`));
+      const opts = session.options(it);
+      let locked = false;
+      const buttons = opts.map((o, i) => {
+        const b = h('button', { class: 'opt', onclick: () => pick(i) }, h('span', { class: 'num' }, i + 1), renderSide(o, imgs));
+        return b;
+      });
+      const pick = (i) => {
+        if (locked) return; locked = true;
+        const ok = opts[i] === answer.trim();
+        buttons.forEach((b, j) => { b.disabled = true; if (opts[j] === answer.trim()) b.classList.add('ok'); });
+        if (ok) return proceed(true, 750);
+        buttons[i].classList.add('bad');
+        navigator.vibrate && navigator.vibrate(120);
+        waitContinue(false);
+      };
+      stage.append(h('div', { class: 'opts' }, ...buttons));
+      keyHandler = (e) => { const n = parseInt(e.key, 10); if (n >= 1 && n <= opts.length) pick(n - 1); };
+    } else if (kind === 'write') {
+      const input = h('input', { type: 'text', class: 'answer', placeholder: `Type the ${answerLabel.toLowerCase()}`,
+        autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'done' });
+      stage.append(h('div', { class: 'label' }, answerLabel), input);
+      const grade = (typed) => {
+        input.disabled = true;
+        const ok = typed !== null && session.check(it, typed);
+        if (ok) { input.classList.add('ok'); return proceed(true, 750); }
+        navigator.vibrate && navigator.vibrate(120);
+        input.classList.add('bad');
+        stage.append(
+          typed ? h('div', { class: 'feedback' }, h('div', { class: 'label' }, 'Your answer'), h('div', { class: 'txt' }, typed)) : null,
+          h('div', { class: 'feedback good' }, h('div', { class: 'label' }, 'Correct answer'), renderSide(answer, imgs)));
+        actions.replaceChildren(
+          h('button', { class: 'btn primary', onclick: () => proceed(false) }, 'Continue'),
+          typed ? h('button', { class: 'btn', onclick: () => proceed(true) }, 'I was right') : null);
+        keyHandler = (e) => e.key === 'Enter' && proceed(false);
+        window.scrollTo(0, document.body.scrollHeight);
+      };
+      const submit = h('button', { class: 'btn primary', onclick: () => grade(input.value) }, 'Answer');
+      actions.append(submit, h('button', { class: 'btn ghost', onclick: () => grade(null) }, "Don't know"));
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); grade(input.value); } });
+      keyHandler = null;
+      setTimeout(() => input.focus({ preventScroll: true }), 50);
+    } else {
+      actions.append(h('button', { class: 'btn primary', onclick: () => {
+        stage.append(h('div', { class: 'feedback good' }, h('div', { class: 'label' }, answerLabel), renderSide(answer, imgs)));
+        actions.replaceChildren(
+          h('button', { class: 'btn primary', onclick: () => proceed(true) }, 'Got it'),
+          h('button', { class: 'btn', onclick: () => proceed(false) }, 'Missed'));
+      } }, 'Show answer'));
+    }
+  }
+
+  nextRound();
+}
+
+// ------------------------------------------------------------------- boot
+libraryView();
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch { /* ignore */ }
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
