@@ -434,12 +434,13 @@ async function study(set, mode, resume = false) {
         if (ok) { input.classList.add('ok'); return proceed(true, 750); }
         navigator.vibrate && navigator.vibrate(120);
         input.classList.add('bad');
-        stage.append(
+        // append() would turn null into the text "null", so only pass real nodes.
+        stage.append(...[
           typed ? h('div', { class: 'feedback' }, h('div', { class: 'label' }, 'Your answer'), h('div', { class: 'txt' }, typed)) : null,
-          h('div', { class: 'feedback good' }, h('div', { class: 'label' }, 'Correct answer'), renderSide(answer, imgs)));
-        actions.replaceChildren(
+          h('div', { class: 'feedback good' }, h('div', { class: 'label' }, 'Correct answer'), renderSide(answer, imgs))].filter(Boolean));
+        actions.replaceChildren(...[
           h('button', { class: 'btn primary', onclick: () => proceed(false) }, 'Continue'),
-          typed ? h('button', { class: 'btn', onclick: () => proceed(true) }, 'I was right') : null);
+          typed ? h('button', { class: 'btn', onclick: () => proceed(true) }, 'I was right') : null].filter(Boolean));
         keyHandler = (e) => e.key === 'Enter' && proceed(false);
         window.scrollTo(0, document.body.scrollHeight);
       };
