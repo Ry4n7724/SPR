@@ -20,6 +20,10 @@ Quizlet's export has no images, so add them yourself in one of these ways:
 
 Try `sample/sample.txt` (text only) and `sample/shapes.zip` (with images).
 
+### Editing a set
+
+Tap ✏️ on a set to rename it, change card text, add or delete cards, and add or replace images (🖼). Learning progress of existing cards is kept.
+
 ### Your data
 
 Everything is stored in your browser (IndexedDB) on that device. Use **Save backup** / **Restore backup** on the library screen to move to another device or to keep a copy. Clearing site data deletes your sets.

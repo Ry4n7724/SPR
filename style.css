@@ -113,3 +113,10 @@ input.answer { border-width: 2px; }
   background: #222; color: #fff; padding: 10px 16px; pointer-events: none; border-radius: 12px; font-size: 15px; max-width: 90vw;
 }
 @media (min-width: 700px) { body { font-size: 18px; } }
+
+/* edit view */
+.row.tight { gap: 0; }
+.edit-field { display: flex; flex-direction: column; gap: 6px; }
+.edit-label { align-items: center; }
+.edit-prev:empty { display: none; }
+.edit-prev img { max-height: 90px; }

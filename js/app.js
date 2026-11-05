@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
-import { parseCards, readFiles, saveSet, exportBackup, restoreBackup } from './import.js';
+import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
 import { Session, buildPool, isDue, dayNum } from './learn.js';
 
 const app = document.getElementById('app');
@@ -53,10 +53,12 @@ async function libraryView() {
         h('div', {},
           h('div', { class: 'set-name' }, s.name),
           h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new`)),
-        h('button', {
-          class: 'icon', 'aria-label': 'Delete set',
-          onclick: async () => { if (confirm(`Delete "${s.name}" and its progress?`)) { await db.deleteSet(s.id); libraryView(); } },
-        }, '🗑')),
+        h('div', { class: 'row tight' },
+          h('button', { class: 'icon', 'aria-label': 'Edit set', onclick: () => editView(s) }, '✏️'),
+          h('button', {
+            class: 'icon', 'aria-label': 'Delete set',
+            onclick: async () => { if (confirm(`Delete "${s.name}" and its progress?`)) { await db.deleteSet(s.id); libraryView(); } },
+          }, '🗑'))),
       h('div', { class: 'row' },
         h('button', { class: 'btn primary', disabled: todo === 0, onclick: () => study(s, 'learn') },
           todo ? `Learn (${todo})` : 'All done today'),
@@ -163,6 +165,96 @@ function importView() {
       h('button', { class: 'btn primary', onclick: () => fileIn.click() }, '📁 Choose file(s)'),
       h('p', { class: 'muted small-text' }, 'Pick a .txt/.csv export, a .zip (text file + images), or a text file together with image files.'),
       fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
+}
+
+// ------------------------------------------------------------------- edit
+async function editView(set) {
+  keyHandler = null;
+  const storedImgs = await db.getImages(set.id);
+  const blobs = new Map(storedImgs.map((im) => [im.name.toLowerCase(), { name: im.name, blob: im.blob }]));
+  const urls = new Map();
+  const urlFor = (k) => { if (!urls.has(k)) urls.set(k, URL.createObjectURL(blobs.get(k).blob)); return urls.get(k); };
+  const imgMap = () => new Map([...blobs.keys()].map((k) => [k, urlFor(k)]));
+  const cleanup = () => urls.forEach((u) => URL.revokeObjectURL(u));
+
+  const rows = (await db.getCards(set.id)).map((c) => ({ card: c, term: c.term, def: c.def, deleted: false }));
+  const originalIds = new Set(rows.map((r) => r.card.id));
+  let dirty = false;
+
+  const name = h('input', { type: 'text', value: set.name, placeholder: 'Set name', autocomplete: 'off', oninput: () => { dirty = true; } });
+  const list = h('div', { class: 'stack' });
+  const fileIn = h('input', { type: 'file', accept: 'image/*', hidden: true });
+
+  function pickImage(row, side) {
+    fileIn.onchange = () => {
+      const f = fileIn.files[0]; fileIn.value = '';
+      if (!f) return;
+      let nm = f.name, k = nm.toLowerCase();
+      const clash = blobs.has(k) && blobs.get(k).blob.size !== f.size;
+      if (clash) { nm = `${db.uid().slice(-5)}-${nm}`; k = nm.toLowerCase(); }
+      blobs.set(k, { name: nm, blob: f });
+      const tok = `[img:${nm}]`;
+      const cur = row[side];
+      row[side] = /\[img:[^\]]+\]/i.test(cur) ? cur.replace(/\[img:[^\]]+\]/i, tok) : (cur.trim() ? `${cur.trim()} ${tok}` : tok);
+      dirty = true; draw();
+    };
+    fileIn.click();
+  }
+
+  function draw() {
+    const map = imgMap();
+    list.replaceChildren(...rows.filter((r) => !r.deleted).map((row) => {
+      const field = (side, label) => {
+        const prev = h('div', { class: 'edit-prev' }, renderSide(row[side], map));
+        const ta = h('textarea', { rows: 2, spellcheck: 'false', 'aria-label': label, oninput: (e) => {
+          row[side] = e.target.value; dirty = true; prev.replaceChildren(renderSide(row[side], imgMap()));
+        } });
+        ta.value = row[side];
+        return h('div', { class: 'edit-field' },
+          h('div', { class: 'row edit-label' }, h('span', { class: 'label grow' }, label),
+            h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, '🖼 Image')),
+          ta, prev);
+      };
+      return h('div', { class: 'card stack' },
+        field('term', 'Term'), field('def', 'Definition'),
+        h('button', { class: 'btn small', onclick: () => { row.deleted = true; dirty = true; draw(); } }, '🗑 Delete card'));
+    }));
+  }
+
+  const back = () => { if (!dirty || confirm('Discard your changes?')) { cleanup(); libraryView(); } };
+
+  const save = async () => {
+    const live = rows.filter((r) => !r.deleted && (r.term.trim() || r.def.trim()));
+    if (!name.value.trim()) return toast('Give the set a name');
+    if (live.some((r) => !r.term.trim() || !r.def.trim())) return toast('Every card needs a term and a definition');
+    saveBtn.disabled = true;
+    const names = new Set(blobs.keys());
+    const upd = [], fresh = [];
+    for (const r of live) {
+      const term = normalizeSide(r.term, names), def = normalizeSide(r.def, names);
+      if (r.card) upd.push({ ...r.card, term, def });
+      else fresh.push(newCard(set.id, term, def));
+    }
+    const kept = new Set([...upd, ...fresh].map((c) => c.id));
+    const removed = [...originalIds].filter((id) => !kept.has(id));
+    const used = imagesUsed([...upd, ...fresh].map((c) => [c.term, c.def]));
+    if (removed.length) await db.deleteMany('cards', removed);
+    await db.putMany('cards', [...upd, ...fresh]);
+    await db.putMany('sets', [{ ...set, name: name.value.trim(), count: upd.length + fresh.length }]);
+    const keep = [...blobs].filter(([k]) => used.has(k));
+    if (keep.length) await db.putMany('images', keep.map(([k, v]) => ({ key: `${set.id}/${k}`, setId: set.id, name: v.name, blob: v.blob })));
+    const drop = storedImgs.map((im) => `${set.id}/${im.name.toLowerCase()}`).filter((key) => !used.has(key.slice(set.id.length + 1)));
+    if (drop.length) await db.deleteMany('images', drop);
+    cleanup(); toast('Set saved'); libraryView();
+  };
+
+  const saveBtn = h('button', { class: 'btn primary', onclick: save }, 'Save');
+  draw();
+  show(
+    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: back }, '←'), h('h1', {}, 'Edit set'), h('span')),
+    h('main', { class: 'page stack' }, name, list,
+      h('button', { class: 'btn', onclick: () => { rows.push({ card: null, term: '', def: '', deleted: false }); dirty = true; draw(); } }, '+ Add card'),
+      saveBtn, fileIn));
 }
 
 // ------------------------------------------------------------------ study

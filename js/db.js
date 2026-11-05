@@ -37,6 +37,11 @@ export const putMany = (store, items) => run(store, 'readwrite', (t) => {
   items.forEach((i) => s.put(i));
 });
 
+export const deleteMany = (store, keys) => run(store, 'readwrite', (t) => {
+  const s = t.objectStore(store);
+  keys.forEach((k) => s.delete(k));
+});
+
 export async function deleteSet(id) {
   const cardKeys = await run('cards', 'readonly', (t) => t.objectStore('cards').index('setId').getAllKeys(id));
   const imgKeys = await run('images', 'readonly', (t) => t.objectStore('images').index('setId').getAllKeys(id));
