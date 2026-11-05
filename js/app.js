@@ -445,7 +445,7 @@ async function study(set, mode, resume = false) {
       };
       const submit = h('button', { class: 'btn primary', onclick: () => grade(input.value) }, 'Answer');
       actions.append(submit, h('button', { class: 'btn ghost', onclick: () => grade(null) }, "Don't know"));
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); grade(input.value); } });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); grade(input.value); } });
       keyHandler = null;
       setTimeout(() => input.focus({ preventScroll: true }), 50);
     } else {
