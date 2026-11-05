@@ -49,12 +49,14 @@ async function libraryView() {
     const fresh = cards.filter((c) => c.state === 'new').length;
     const todo = due + Math.min(fresh, 15);
     const saved = await db.getSession(s.id);
+    const starred = cards.filter((c) => c.starred).length;
     list.append(h('div', { class: 'card set' },
       h('div', { class: 'set-head' },
-        h('div', {},
+        h('div', { class: 'grow clickable', onclick: () => cardsView(s) },
           h('div', { class: 'set-name' }, s.name),
-          h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new`)),
+          h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new${starred ? ` · ${starred} ★` : ''}`)),
         h('div', { class: 'row tight' },
+          h('button', { class: 'icon', 'aria-label': 'View cards', onclick: () => cardsView(s) }, '📖'),
           h('button', { class: 'icon', 'aria-label': 'Set settings', onclick: () => settingsView(s) }, '⚙️'),
           h('button', { class: 'icon', 'aria-label': 'Edit set', onclick: () => editView(s) }, '✏️'),
           h('button', {
@@ -64,7 +66,7 @@ async function libraryView() {
       saved
         ? h('div', { class: 'row' },
           h('button', { class: 'btn primary', onclick: () => study(s, saved.mode, true) },
-            `Resume ${saved.mode === 'learn' ? 'learn' : 'practice'} (${saved.mastered}/${saved.total})`),
+            `Resume ${saved.mode === 'learn' ? 'learn' : saved.mode === 'starred' ? 'starred' : 'practice'} (${saved.mastered}/${saved.total})`),
           h('button', { class: 'btn', onclick: async () => {
             if (confirm(`Discard the saved session for "${s.name}"?`)) { await db.deleteSession(s.id); libraryView(); }
           } }, 'Start over'))
@@ -102,6 +104,55 @@ async function libraryView() {
         h('button', { class: 'btn small', onclick: () => backupIn.click() }, 'Restore backup')) : null,
       !sets.length ? h('div', { class: 'row footer-row' }, h('button', { class: 'btn small', onclick: () => backupIn.click() }, 'Restore backup')) : null,
       backupIn));
+}
+
+// ------------------------------------------------------------------ cards
+async function cardsView(set) {
+  keyHandler = null;
+  const cards = (await db.getCards(set.id)).sort((a, b) => a.id < b.id ? -1 : 1);
+  const imgs = await imageMap(set.id);
+  const key = `filter-${set.id}`;
+  let filter = store.get(key, 'all');
+  const back = () => { revoke(imgs); libraryView(); };
+
+  const allBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('all') });
+  const starBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('starred') });
+  const learnBtn = h('button', { class: 'btn primary', onclick: () => { revoke(imgs); study(set, 'starred', false, () => cardsView(set)); } });
+  const list = h('div', { class: 'stack' });
+
+  const starCount = () => cards.filter((c) => c.starred).length;
+  function counts() {
+    const m = starCount();
+    allBtn.textContent = `All (${cards.length})`;
+    starBtn.textContent = `★ Starred (${m})`;
+    allBtn.classList.toggle('on', filter === 'all');
+    starBtn.classList.toggle('on', filter === 'starred');
+    learnBtn.textContent = `Learn starred (${m})`;
+    learnBtn.disabled = m === 0;
+  }
+  function setFilter(f) { filter = f; store.set(key, f); counts(); draw(); }
+
+  function draw() {
+    const shown = cards.filter((c) => filter === 'all' || c.starred);
+    list.replaceChildren(...(shown.length ? shown.map((c) => {
+      const star = h('button', { class: 'icon star', 'aria-label': 'Star card' });
+      const paint = () => { star.textContent = c.starred ? '★' : '☆'; star.classList.toggle('on', !!c.starred); };
+      star.onclick = async () => {
+        c.starred = !c.starred;
+        paint(); counts();
+        await db.putMany('cards', [c]);
+      };
+      paint();
+      return h('div', { class: 'card term-row' },
+        h('div', { class: 'grow' }, renderSide(c.term, imgs), h('hr'), h('div', { class: 'def' }, renderSide(c.def, imgs))),
+        star);
+    }) : [h('p', { class: 'muted' }, 'No starred cards yet. Tap ☆ on a card to star it.')]));
+  }
+
+  counts(); draw();
+  show(
+    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: back }, '←'), h('h1', {}, set.name), h('span')),
+    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), learnBtn, list));
 }
 
 // ----------------------------------------------------------------- import
@@ -284,26 +335,26 @@ async function editView(set) {
 }
 
 // ------------------------------------------------------------------ study
-async function study(set, mode, resume = false) {
+async function study(set, mode, resume = false, back = libraryView) {
   const cards = await db.getCards(set.id);
   const onCard = (c) => db.putMany('cards', [c]);
   let session = null;
   if (resume) {
     const saved = await db.getSession(set.id);
     session = saved && Session.restore(saved, cards, { onCard });
-    if (!session) { await db.deleteSession(set.id); toast('Saved session is no longer available'); return libraryView(); }
+    if (!session) { await db.deleteSession(set.id); toast('Saved session is no longer available'); return back(); }
   }
   const imgs = await imageMap(set.id);
   if (!session) {
     const pool = buildPool(cards, mode, dayNum());
-    if (!pool.length) { revoke(imgs); return toast('Nothing to study'); }
+    if (!pool.length) { revoke(imgs); toast('Nothing to study'); return back(); }
     session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), modes: modesFor(set.learnMode), onCard });
   }
   // Save after every step; a finished session has nothing to resume.
   const persist = () => (session.finished
     ? db.deleteSession(set.id)
     : db.saveSession({ setId: set.id, ...session.toJSON() })).catch(() => {});
-  const exit = () => { keyHandler = null; revoke(imgs); libraryView(); };
+  const exit = () => { keyHandler = null; revoke(imgs); back(); };
 
   // Built once and updated in place so the width transition animates.
   const bar = h('div', { style: 'width:0%' });
@@ -386,7 +437,20 @@ async function study(set, mode, resume = false) {
     const label = it.dir === 'def' ? 'Term' : 'Definition';
     const answerLabel = it.dir === 'def' ? 'Definition' : 'Term';
     const answer = session.answer(it);
+    const starBtn = h('button', { class: 'icon star-card', 'aria-label': 'Star card' }, it.card.starred ? '★' : '☆');
+    starBtn.onclick = async () => {
+      const card = { ...it.card, starred: !it.card.starred };
+      it.card = card;
+      const i = cards.findIndex((c) => c.id === card.id);
+      if (i >= 0) cards[i] = card;
+      starBtn.textContent = card.starred ? '★' : '☆';
+      starBtn.classList.toggle('on', !!card.starred);
+      await db.putMany('cards', [card]);
+      persist();
+    };
+    starBtn.classList.toggle('on', !!it.card.starred);
     const promptBox = h('div', { class: 'card prompt' },
+      starBtn,
       h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, '✏️'),
       h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
     const stage = h('div', { class: 'stage' });

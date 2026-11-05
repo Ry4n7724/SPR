@@ -45,6 +45,7 @@ export function schedule(card, misses, today) {
 // mode 'learn': due cards first, then a few new ones. mode 'practice': everything.
 export function buildPool(cards, mode, today) {
   if (mode === 'practice') return shuffle(cards);
+  if (mode === 'starred') return shuffle(cards.filter((c) => c.starred));
   const due = cards.filter((c) => isDue(c, today)).sort((a, b) => a.due - b.due);
   const fresh = shuffle(cards.filter((c) => c.state === 'new')).slice(0, NEW_PER_SESSION);
   return [...shuffle(due), ...fresh];

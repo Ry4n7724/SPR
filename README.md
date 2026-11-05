@@ -28,6 +28,10 @@ While studying, tap ✏️ on the question to fix the current card's term or def
 
 Progress is saved after every answer. If you close a session (✕) or the app, the set shows **Resume** (with progress) and **Start over** next time.
 
+### Viewing and starring cards
+
+Tap 📖 (or the set name) to see all cards with their definitions and images. Tap ☆ to star a card, switch between **All** and **Starred**, and tap **Learn starred** to study only the starred cards. You can also star the current card with ☆ while studying. Starred sessions don't change the review schedule.
+
 ### Editing a set
 
 Tap ✏️ on a set to rename it, change card text, add or delete cards, and add or replace images (🖼). Learning progress of existing cards is kept.

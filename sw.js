@@ -1,5 +1,5 @@
 // Stale-while-revalidate cache of the app files so the app opens offline.
-const CACHE = 'spaced-cards-v7';
+const CACHE = 'spaced-cards-v8';
 const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/content.js', 'js/db.js', 'js/import.js', 'js/learn.js', 'js/vendor/jszip.min.js'];
 

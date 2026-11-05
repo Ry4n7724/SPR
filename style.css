@@ -121,6 +121,20 @@ input.answer { border-width: 2px; }
 .edit-prev:empty { display: none; }
 .edit-prev img { max-height: 90px; }
 
+/* card list + stars */
+.clickable { cursor: pointer; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.seg-btn { flex: 1; min-height: 44px; border: 0; background: var(--card); color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.seg-btn.on { background: var(--accent); color: var(--accent-text); }
+.term-row { display: flex; align-items: flex-start; gap: 8px; }
+.term-row .side { align-items: flex-start; }
+.term-row .side img { max-height: 90px; }
+.term-row .def { color: var(--muted); font-size: 15px; }
+.term-row hr { margin: 8px 0; }
+.star { color: var(--muted); flex: none; }
+.star.on, .star-card.on { color: #f5b301; }
+.star-card { position: absolute; top: 2px; left: 2px; min-width: 44px; min-height: 44px; font-size: 20px; color: var(--muted); }
+
 /* edit card while studying */
 .prompt { position: relative; }
 .edit-card { position: absolute; top: 2px; right: 2px; min-width: 44px; min-height: 44px; font-size: 16px; }
