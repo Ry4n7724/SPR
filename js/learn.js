@@ -53,6 +53,8 @@ export class Session {
     this.allCards = allCards;
     this.mode = mode; this.dir = dir; this.size = size; this.onCard = onCard;
     this.total = pool.length; this.mastered = 0; this.perfect = 0;
+    this.steps = 0;
+    this.stepsTotal = pool.reduce((n, c) => n + (mode === 'learn' && c.state === 'review' ? 1 : 2), 0);
     this.items = []; this.queue = [];
     this.today = dayNum();
     this.round = 0;
@@ -70,6 +72,7 @@ export class Session {
     return true;
   }
 
+  get progress() { return this.stepsTotal ? this.steps / this.stepsTotal : 0; }
   get current() { return this.queue[0]; }
   get roundDone() { return this.queue.length === 0; }
   get finished() { return this.roundDone && this.pending.length === 0; }
@@ -114,6 +117,7 @@ export class Session {
   submit(ok) {
     const it = this.queue.shift();
     if (ok) {
+      this.steps++;
       it.stage++;
       if (it.stage >= 2) {
         it.done = true;

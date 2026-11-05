@@ -174,10 +174,19 @@ async function study(set, mode) {
   const session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), onCard: (c) => db.putMany('cards', [c]) });
   const exit = () => { keyHandler = null; revoke(imgs); libraryView(); };
 
-  const topbar = () => h('header', { class: 'topbar' },
-    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'),
-    h('div', { class: 'progress', 'aria-label': 'Progress' }, h('div', { style: `width:${(session.mastered / session.total) * 100}%` })),
-    h('span', { class: 'muted count' }, `${session.mastered}/${session.total}`));
+  // Built once and updated in place so the width transition animates.
+  const bar = h('div', { style: 'width:0%' });
+  const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
+  const count = h('span', { class: 'muted count' });
+  const header = h('header', { class: 'topbar' },
+    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'), track, count);
+  const topbar = () => {
+    const pct = Math.round(session.progress * 100);
+    bar.style.width = `${pct}%`;
+    track.setAttribute('aria-valuenow', pct);
+    count.textContent = `${session.mastered}/${session.total}`;
+    return header;
+  };
 
   function nextRound() {
     if (!session.startRound()) return finish();
