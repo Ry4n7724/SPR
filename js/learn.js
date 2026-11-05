@@ -14,6 +14,10 @@ export function shuffle(a) {
   return a;
 }
 
+// set.learnMode -> list of question stages. Default: multiple choice, then written.
+export const LEARN_MODES = { both: ['mc', 'write'], mc: ['mc'], write: ['write'] };
+export const modesFor = (learnMode) => LEARN_MODES[learnMode] || LEARN_MODES.both;
+
 export const isDue = (c, today) => c.state === 'review' && c.due <= today;
 
 // Update a card's schedule after a session. misses = wrong answers this session.
@@ -48,13 +52,14 @@ export function buildPool(cards, mode, today) {
 
 export class Session {
   // allCards: whole set (used for distractors). pool: cards to study.
-  constructor(pool, allCards, { mode = 'learn', dir = 'def', size = 7, onCard = () => {} } = {}) {
+  constructor(pool, allCards, { mode = 'learn', dir = 'def', size = 7, modes = LEARN_MODES.both, onCard = () => {} } = {}) {
     this.pending = [...pool];
     this.allCards = allCards;
     this.mode = mode; this.dir = dir; this.size = size; this.onCard = onCard;
+    this.modes = modes;
     this.total = pool.length; this.mastered = 0; this.perfect = 0;
     this.steps = 0;
-    this.stepsTotal = pool.reduce((n, c) => n + (mode === 'learn' && c.state === 'review' ? 1 : 2), 0);
+    this.stepsTotal = pool.reduce((n, c) => n + (mode === 'learn' && c.state === 'review' ? 1 : modes.length), 0);
     this.items = []; this.queue = [];
     this.today = dayNum();
     this.round = 0;
@@ -65,14 +70,14 @@ export class Session {
     this.round++;
     this.items = this.pending.splice(0, this.size).map((card) => ({
       card, misses: 0, done: false,
-      stage: this.mode === 'learn' && card.state === 'review' ? 1 : 0,
+      stage: this.mode === 'learn' && card.state === 'review' ? this.modes.length - 1 : 0,
       dir: this.dir === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : this.dir,
     }));
     this.queue = shuffle(this.items);
     return true;
   }
 
-  get progress() { return this.stepsTotal ? this.steps / this.stepsTotal : 0; }
+  get progress() { return this.stepsTotal ? Math.min(1, this.steps / this.stepsTotal) : 0; }
   get current() { return this.queue[0]; }
   get roundDone() { return this.queue.length === 0; }
   get finished() { return this.roundDone && this.pending.length === 0; }
@@ -98,7 +103,7 @@ export class Session {
   // 'mc' | 'write' | 'reveal'
   kind(it) {
     const textual = hasText(this.answer(it));
-    if (it.stage === 1 && textual) return 'write';
+    if (this.modes[it.stage] === 'write' && textual) return 'write';
     if (this.distractors(it, 1).length) return 'mc';
     return textual ? 'write' : 'reveal';
   }
@@ -119,7 +124,7 @@ export class Session {
     if (ok) {
       this.steps++;
       it.stage++;
-      if (it.stage >= 2) {
+      if (it.stage >= this.modes.length) {
         it.done = true;
         this.mastered++;
         if (it.misses === 0) this.perfect++;
@@ -135,5 +140,31 @@ export class Session {
       this.queue.splice(Math.min(this.queue.length, 2), 0, it);
     }
     return it;
+  }
+
+  // Plain-data snapshot so a session can be saved and continued later.
+  toJSON() {
+    const slim = (it) => ({ id: it.card.id, misses: it.misses, done: it.done, stage: it.stage, dir: it.dir });
+    return {
+      mode: this.mode, dir: this.dir, size: this.size, modes: this.modes,
+      round: this.round, total: this.total, mastered: this.mastered, perfect: this.perfect,
+      steps: this.steps, stepsTotal: this.stepsTotal,
+      pending: this.pending.map((c) => c.id),
+      items: this.items.map(slim),
+      queue: this.queue.map((it) => it.card.id),
+    };
+  }
+
+  // Rebuild a saved session. Cards that no longer exist are dropped. Returns null if nothing is left.
+  static restore(data, allCards, { onCard } = {}) {
+    const byId = new Map(allCards.map((c) => [c.id, c]));
+    const s = new Session([], allCards, { mode: data.mode, dir: data.dir, size: data.size, modes: data.modes, onCard });
+    s.pending = data.pending.map((id) => byId.get(id)).filter(Boolean);
+    s.items = data.items.filter((i) => byId.has(i.id)).map((i) => ({ ...i, card: byId.get(i.id) }));
+    const live = new Map(s.items.map((it) => [it.card.id, it]));
+    s.queue = data.queue.map((id) => live.get(id)).filter(Boolean);
+    Object.assign(s, { round: data.round, total: data.total, mastered: data.mastered,
+      perfect: data.perfect, steps: data.steps, stepsTotal: data.stepsTotal });
+    return s.finished ? null : s;
   }
 }

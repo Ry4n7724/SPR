@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
-import { Session, buildPool, isDue, dayNum } from './learn.js';
+import { Session, buildPool, isDue, dayNum, modesFor } from './learn.js';
 
 const app = document.getElementById('app');
 const show = (...els) => { app.replaceChildren(...els); window.scrollTo(0, 0); };
@@ -48,21 +48,30 @@ async function libraryView() {
     const due = cards.filter((c) => isDue(c, today)).length;
     const fresh = cards.filter((c) => c.state === 'new').length;
     const todo = due + Math.min(fresh, 15);
+    const saved = await db.getSession(s.id);
     list.append(h('div', { class: 'card set' },
       h('div', { class: 'set-head' },
         h('div', {},
           h('div', { class: 'set-name' }, s.name),
           h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new`)),
         h('div', { class: 'row tight' },
+          h('button', { class: 'icon', 'aria-label': 'Set settings', onclick: () => settingsView(s) }, '⚙️'),
           h('button', { class: 'icon', 'aria-label': 'Edit set', onclick: () => editView(s) }, '✏️'),
           h('button', {
             class: 'icon', 'aria-label': 'Delete set',
             onclick: async () => { if (confirm(`Delete "${s.name}" and its progress?`)) { await db.deleteSet(s.id); libraryView(); } },
           }, '🗑'))),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn primary', disabled: todo === 0, onclick: () => study(s, 'learn') },
-          todo ? `Learn (${todo})` : 'All done today'),
-        h('button', { class: 'btn', onclick: () => study(s, 'practice') }, 'Practice all'))));
+      saved
+        ? h('div', { class: 'row' },
+          h('button', { class: 'btn primary', onclick: () => study(s, saved.mode, true) },
+            `Resume ${saved.mode === 'learn' ? 'learn' : 'practice'} (${saved.mastered}/${saved.total})`),
+          h('button', { class: 'btn', onclick: async () => {
+            if (confirm(`Discard the saved session for "${s.name}"?`)) { await db.deleteSession(s.id); libraryView(); }
+          } }, 'Start over'))
+        : h('div', { class: 'row' },
+          h('button', { class: 'btn primary', disabled: todo === 0, onclick: () => study(s, 'learn') },
+            todo ? `Learn (${todo})` : 'All done today'),
+          h('button', { class: 'btn', onclick: () => study(s, 'practice') }, 'Practice all'))));
   }
 
   const backupIn = h('input', { type: 'file', accept: '.zip', hidden: true, onchange: async (e) => {
@@ -167,6 +176,23 @@ function importView() {
       fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
 }
 
+// --------------------------------------------------------------- settings
+function settingsView(set) {
+  keyHandler = null;
+  const options = [['both', 'Multiple choice, then written'], ['mc', 'Multiple choice only'], ['write', 'Written only']];
+  const sel = h('select', { onchange: async (e) => {
+    set = { ...set, learnMode: e.target.value };
+    await db.putMany('sets', [set]);
+    toast('Saved');
+  } }, ...options.map(([v, l]) => h('option', { value: v, selected: (set.learnMode || 'both') === v }, l)));
+  show(
+    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: libraryView }, '←'), h('h1', {}, 'Settings'), h('span')),
+    h('main', { class: 'page stack' },
+      h('div', { class: 'set-name' }, set.name),
+      h('label', { class: 'field' }, 'Learn mode', sel),
+      h('p', { class: 'muted small-text' }, 'Applies to the next session. A saved session keeps the mode it started with.')));
+}
+
 // ------------------------------------------------------------------- edit
 async function editView(set) {
   keyHandler = null;
@@ -258,12 +284,25 @@ async function editView(set) {
 }
 
 // ------------------------------------------------------------------ study
-async function study(set, mode) {
+async function study(set, mode, resume = false) {
   const cards = await db.getCards(set.id);
+  const onCard = (c) => db.putMany('cards', [c]);
+  let session = null;
+  if (resume) {
+    const saved = await db.getSession(set.id);
+    session = saved && Session.restore(saved, cards, { onCard });
+    if (!session) { await db.deleteSession(set.id); toast('Saved session is no longer available'); return libraryView(); }
+  }
   const imgs = await imageMap(set.id);
-  const pool = buildPool(cards, mode, dayNum());
-  if (!pool.length) { revoke(imgs); return toast('Nothing to study'); }
-  const session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), onCard: (c) => db.putMany('cards', [c]) });
+  if (!session) {
+    const pool = buildPool(cards, mode, dayNum());
+    if (!pool.length) { revoke(imgs); return toast('Nothing to study'); }
+    session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), modes: modesFor(set.learnMode), onCard });
+  }
+  // Save after every step; a finished session has nothing to resume.
+  const persist = () => (session.finished
+    ? db.deleteSession(set.id)
+    : db.saveSession({ setId: set.id, ...session.toJSON() })).catch(() => {});
   const exit = () => { keyHandler = null; revoke(imgs); libraryView(); };
 
   // Built once and updated in place so the width transition animates.
@@ -282,6 +321,7 @@ async function study(set, mode) {
 
   function nextRound() {
     if (!session.startRound()) return finish();
+    persist();
     question();
   }
 
@@ -297,6 +337,7 @@ async function study(set, mode) {
 
   function finish() {
     keyHandler = null;
+    persist();
     show(topbar(),
       h('main', { class: 'page stack center' },
         h('div', { class: 'big' }, '🏁'), h('h2', {}, 'Session complete'),
@@ -320,6 +361,7 @@ async function study(set, mode) {
 
     const proceed = (ok, delay) => {
       session.submit(ok);
+      persist();
       keyHandler = null;
       if (delay) setTimeout(question, delay); else question();
     };
@@ -381,7 +423,10 @@ async function study(set, mode) {
     }
   }
 
-  nextRound();
+  if (!resume) nextRound();
+  else if (session.queue.length) question();
+  else if (session.items.length) roundSummary();
+  else nextRound();
 }
 
 // ------------------------------------------------------------------- boot

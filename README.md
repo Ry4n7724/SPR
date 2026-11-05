@@ -20,6 +20,12 @@ Quizlet's export has no images, so add them yourself in one of these ways:
 
 Try `sample/sample.txt` (text only) and `sample/shapes.zip` (with images).
 
+### Set settings and resuming
+
+Tap ⚙️ on a set to choose its learn mode: multiple choice then written (default), multiple choice only, or written only. It applies to the next session.
+
+Progress is saved after every answer. If you close a session (✕) or the app, the set shows **Resume** (with progress) and **Start over** next time.
+
 ### Editing a set
 
 Tap ✏️ on a set to rename it, change card text, add or delete cards, and add or replace images (🖼). Learning progress of existing cards is kept.
