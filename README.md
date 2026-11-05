@@ -24,6 +24,8 @@ Try `sample/sample.txt` (text only) and `sample/shapes.zip` (with images).
 
 Tap ⚙️ on a set to choose its learn mode: multiple choice then written (default), multiple choice only, or written only. It applies to the next session.
 
+While studying, tap ✏️ on the question to fix the current card's term or definition.
+
 Progress is saved after every answer. If you close a session (✕) or the app, the set shows **Resume** (with progress) and **Start over** next time.
 
 ### Editing a set

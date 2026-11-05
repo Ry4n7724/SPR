@@ -120,3 +120,9 @@ input.answer { border-width: 2px; }
 .edit-label { align-items: center; }
 .edit-prev:empty { display: none; }
 .edit-prev img { max-height: 90px; }
+
+/* edit card while studying */
+.prompt { position: relative; }
+.edit-card { position: absolute; top: 2px; right: 2px; min-width: 44px; min-height: 44px; font-size: 16px; }
+.modal { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-end; justify-content: center; }
+.modal-body { width: 100%; max-width: 560px; max-height: 90dvh; overflow: auto; border-radius: 16px 16px 0 0; padding-bottom: calc(14px + var(--safe-b)); }

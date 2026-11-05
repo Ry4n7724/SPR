@@ -319,6 +319,39 @@ async function study(set, mode, resume = false) {
     return header;
   };
 
+  // Fix a typo in the current card without leaving the session.
+  function editCurrent(it) {
+    keyHandler = null;
+    const names = new Set(imgs.keys());
+    const mk = (label, val) => {
+      const ta = h('textarea', { rows: 3, spellcheck: 'false', 'aria-label': label });
+      ta.value = val;
+      return [h('label', { class: 'field' }, label, ta), ta];
+    };
+    const [termEl, termTa] = mk('Term', it.card.term);
+    const [defEl, defTa] = mk('Definition', it.card.def);
+    const close = () => { box.remove(); question(); };
+    const save = async () => {
+      const term = normalizeSide(termTa.value, names), def = normalizeSide(defTa.value, names);
+      if (!term || !def) return toast('Term and definition cannot be empty');
+      const card = { ...it.card, term, def };
+      it.card = card;
+      const i = cards.findIndex((c) => c.id === card.id);
+      if (i >= 0) cards[i] = card;
+      await db.putMany('cards', [card]);
+      persist();
+      toast('Card saved');
+      close();
+    };
+    const box = h('div', { class: 'modal' },
+      h('div', { class: 'card stack modal-body' }, h('h2', {}, 'Edit card'), termEl, defEl,
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onclick: close }, 'Cancel'),
+          h('button', { class: 'btn primary', onclick: save }, 'Save'))));
+    document.body.append(box);
+    termTa.focus();
+  }
+
   function nextRound() {
     if (!session.startRound()) return finish();
     persist();
@@ -353,7 +386,9 @@ async function study(set, mode, resume = false) {
     const label = it.dir === 'def' ? 'Term' : 'Definition';
     const answerLabel = it.dir === 'def' ? 'Definition' : 'Term';
     const answer = session.answer(it);
-    const promptBox = h('div', { class: 'card prompt' }, h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
+    const promptBox = h('div', { class: 'card prompt' },
+      h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, '✏️'),
+      h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
     const stage = h('div', { class: 'stage' });
     const actions = h('div', { class: 'actions' });
     const stack = h('main', { class: 'page stack' }, promptBox, stage);
