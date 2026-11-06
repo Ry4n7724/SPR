@@ -31,7 +31,10 @@ async function run(stores, mode, fn) {
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
 export const getSets = () => run('sets', 'readonly', (t) => t.objectStore('sets').getAll());
-export const getCards = (setId) => run('cards', 'readonly', (t) => t.objectStore('cards').index('setId').getAll(setId));
+// Cards come back in their saved order (`pos`); older cards without one keep id order after those.
+const byPos = (a, b) => (a.pos ?? Infinity) - (b.pos ?? Infinity) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+export const getCards = async (setId) =>
+  (await run('cards', 'readonly', (t) => t.objectStore('cards').index('setId').getAll(setId))).sort(byPos);
 export const getImages = (setId) => run('images', 'readonly', (t) => t.objectStore('images').index('setId').getAll(setId));
 
 export const getSession = (setId) => run('sessions', 'readonly', (t) => t.objectStore('sessions').get(setId));

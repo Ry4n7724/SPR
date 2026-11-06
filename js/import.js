@@ -101,8 +101,8 @@ export async function readFiles(files) {
   return out;
 }
 
-export function newCard(setId, term, def) {
-  return { id: db.uid(), setId, term, def, state: 'new', reps: 0, ease: 2.5, interval: 0, due: 0, lapses: 0 };
+export function newCard(setId, term, def, pos) {
+  return { id: db.uid(), setId, pos, term, def, state: 'new', reps: 0, ease: 2.5, interval: 0, due: 0, lapses: 0 };
 }
 
 export async function saveSet(name, pairs, images) {
@@ -111,7 +111,7 @@ export async function saveSet(name, pairs, images) {
   const used = imagesUsed(norm);
   const set = { id: db.uid(), name, created: Date.now(), count: norm.length };
   await db.putMany('sets', [set]);
-  await db.putMany('cards', norm.map(([a, b]) => newCard(set.id, a, b)));
+  await db.putMany('cards', norm.map(([a, b], i) => newCard(set.id, a, b, i)));
   const imgs = [...images.entries()].filter(([k]) => used.has(k))
     .map(([k, v]) => ({ key: `${set.id}/${k}`, setId: set.id, name: v.name, blob: v.blob }));
   if (imgs.length) await db.putMany('images', imgs);

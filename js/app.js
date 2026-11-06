@@ -109,7 +109,7 @@ async function libraryView() {
 // ------------------------------------------------------------------ cards
 async function cardsView(set) {
   keyHandler = null;
-  const cards = (await db.getCards(set.id)).sort((a, b) => a.id < b.id ? -1 : 1);
+  const cards = await db.getCards(set.id);
   const imgs = await imageMap(set.id);
   const key = `filter-${set.id}`;
   let filter = store.get(key, 'all');
@@ -313,11 +313,12 @@ async function editView(set) {
     saveBtn.disabled = true;
     const names = new Set(blobs.keys());
     const upd = [], fresh = [];
-    for (const r of live) {
+    // Renumber so the order on screen is the order that gets saved.
+    live.forEach((r, pos) => {
       const term = normalizeSide(r.term, names), def = normalizeSide(r.def, names);
-      if (r.card) upd.push({ ...r.card, term, def });
-      else fresh.push(newCard(set.id, term, def));
-    }
+      if (r.card) upd.push({ ...r.card, term, def, pos });
+      else fresh.push(newCard(set.id, term, def, pos));
+    });
     const kept = new Set([...upd, ...fresh].map((c) => c.id));
     const removed = [...originalIds].filter((id) => !kept.has(id));
     const used = imagesUsed([...upd, ...fresh].map((c) => [c.term, c.def]));
