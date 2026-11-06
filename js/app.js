@@ -287,9 +287,15 @@ async function editView(set) {
           row[side] = e.target.value; dirty = true; prev.replaceChildren(renderSide(row[side], imgMap()));
         } });
         ta.value = row[side];
+        const hasImg = /\[img:[^\]]+\]/i.test(row[side]);
+        const removeImage = () => {
+          row[side] = row[side].replace(/\[img:[^\]]+\]/gi, '').replace(/\s{2,}/g, ' ').trim();
+          dirty = true; draw();
+        };
         return h('div', { class: 'edit-field' },
           h('div', { class: 'row edit-label' }, h('span', { class: 'label grow' }, label),
-            h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, '🖼 Image')),
+            h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, hasImg ? '🖼 Change image' : '🖼 Image'),
+            hasImg ? h('button', { class: 'btn small', type: 'button', onclick: removeImage }, '✕ Remove image') : null),
           ta, prev);
       };
       return h('div', { class: 'card stack' },

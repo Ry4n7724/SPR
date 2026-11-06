@@ -117,7 +117,7 @@ input.answer { border-width: 2px; }
 /* edit view */
 .row.tight { gap: 0; }
 .edit-field { display: flex; flex-direction: column; gap: 6px; }
-.edit-label { align-items: center; }
+.edit-label { align-items: center; gap: 8px; }
 .edit-prev:empty { display: none; }
 .edit-prev img { max-height: 90px; }
 
