@@ -509,11 +509,35 @@ async function study(set, mode, resume = false, back = libraryView) {
         stage.append(...[
           typed ? h('div', { class: 'feedback' }, h('div', { class: 'label' }, 'Your answer'), h('div', { class: 'txt' }, typed)) : null,
           h('div', { class: 'feedback good' }, h('div', { class: 'label' }, 'Correct answer'), renderSide(answer, imgs))].filter(Boolean));
-        actions.replaceChildren(...[
-          h('button', { class: 'btn primary', onclick: () => proceed(false) }, 'Continue'),
-          typed ? h('button', { class: 'btn', onclick: () => proceed(true) }, 'I was right') : null].filter(Boolean));
-        keyHandler = (e) => e.key === 'Enter' && proceed(false);
+        const rightBtn = typed ? h('button', { class: 'btn', onclick: () => proceed(true) }, 'I was right') : null;
+        // Image-only answers can't be typed, so those skip the retype step.
+        if (!hasText(answer)) {
+          actions.replaceChildren(...[h('button', { class: 'btn primary', onclick: () => proceed(false) }, 'Continue'), rightBtn].filter(Boolean));
+          keyHandler = (e) => e.key === 'Enter' && proceed(false);
+          window.scrollTo(0, document.body.scrollHeight);
+          return;
+        }
+        // Wrong answers must be retyped correctly before moving on.
+        const retype = h('input', { type: 'text', class: 'answer', placeholder: 'Type the correct answer',
+          autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'done' });
+        const cont = h('button', { class: 'btn primary', disabled: true, onclick: () => tryContinue() }, 'Continue');
+        const tryContinue = () => {
+          if (session.check(it, retype.value)) return proceed(false);
+          retype.classList.add('bad');
+          navigator.vibrate && navigator.vibrate(60);
+        };
+        retype.addEventListener('input', () => {
+          const ok = session.check(it, retype.value);
+          cont.disabled = !ok;
+          retype.classList.toggle('ok', ok);
+          retype.classList.remove('bad');
+        });
+        retype.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tryContinue(); } });
+        stage.append(h('div', { class: 'label' }, 'Retype the correct answer'), retype);
+        actions.replaceChildren(...[cont, rightBtn].filter(Boolean));
+        keyHandler = null;
         window.scrollTo(0, document.body.scrollHeight);
+        setTimeout(() => retype.focus({ preventScroll: true }), 50);
       };
       const submit = h('button', { class: 'btn primary', onclick: () => grade(input.value) }, 'Answer');
       actions.append(submit, h('button', { class: 'btn ghost', onclick: () => grade(null) }, "Don't know"));

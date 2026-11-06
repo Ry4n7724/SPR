@@ -6,7 +6,7 @@ A small spaced-repetition app in the style of Quizlet's **Learn** mode. It is a 
 
 1. **Export from Quizlet**: open a set → `⋯` → *Export*. Keep the defaults (Tab between term and definition, new line between cards) and copy the text, or save it as a `.txt` file.
 2. In the app tap **+ Import** and either choose the file or paste the text. A preview shows the cards it found. Pick other separators if you used custom ones.
-3. Tap **Learn** on a set. Cards that are due (plus up to 15 new ones) come in rounds of 7: first multiple choice, then typing the answer. Misses come back until you get them right. Finished cards are scheduled for later days (1 → 3 → longer, SM-2 style). **Practice all** studies everything without changing the schedule.
+3. Tap **Learn** on a set. Cards that are due (plus up to 15 new ones) come in rounds of 7: first multiple choice, then typing the answer. A wrong typed answer has to be retyped correctly before you can continue. Misses come back until you get them right. Finished cards are scheduled for later days (1 → 3 → longer, SM-2 style). **Practice all** studies everything without changing the schedule.
 
 "Answer with" on the library screen picks whether you are asked for the definition, the term, or both.
 
