@@ -10,6 +10,10 @@ A small spaced-repetition app in the style of Quizlet's **Learn** mode. It is a 
 
 "Answer with" on the library screen picks whether you are asked for the definition, the term, or both.
 
+### Flashcards
+
+Tap 🃏 on a set (or **🃏 Flashcards** in the card list, which follows the All/Starred filter). Tap the card to flip it, then choose **✓ Knew it** or **✗ Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change the review schedule.
+
 ### Images
 
 Quizlet's export has no images, so add them yourself in one of these ways:

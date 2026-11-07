@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
-import { Session, buildPool, isDue, dayNum, modesFor } from './learn.js';
+import { Session, buildPool, isDue, dayNum, modesFor, shuffle } from './learn.js';
 
 const app = document.getElementById('app');
 const show = (...els) => { app.replaceChildren(...els); window.scrollTo(0, 0); };
@@ -57,6 +57,7 @@ async function libraryView() {
           h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new${starred ? ` · ${starred} ★` : ''}`)),
         h('div', { class: 'row tight' },
           h('button', { class: 'icon', 'aria-label': 'View cards', onclick: () => cardsView(s) }, '📖'),
+          h('button', { class: 'icon', 'aria-label': 'Flashcards', onclick: () => flashcardsView(s, cards) }, '🃏'),
           h('button', { class: 'icon', 'aria-label': 'Set settings', onclick: () => settingsView(s) }, '⚙️'),
           h('button', { class: 'icon', 'aria-label': 'Edit set', onclick: () => editView(s) }, '✏️'),
           h('button', {
@@ -118,6 +119,9 @@ async function cardsView(set) {
   const allBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('all') });
   const starBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('starred') });
   const learnBtn = h('button', { class: 'btn primary', onclick: () => { revoke(imgs); study(set, 'starred', false, () => cardsView(set)); } });
+  const flashBtn = h('button', { class: 'btn', onclick: () => {
+    revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set));
+  } }, '🃏 Flashcards');
   const list = h('div', { class: 'stack' });
 
   const starCount = () => cards.filter((c) => c.starred).length;
@@ -129,6 +133,7 @@ async function cardsView(set) {
     starBtn.classList.toggle('on', filter === 'starred');
     learnBtn.textContent = `Learn starred (${m})`;
     learnBtn.disabled = m === 0;
+    flashBtn.disabled = filter === 'starred' ? m === 0 : cards.length === 0;
   }
   function setFilter(f) { filter = f; store.set(key, f); counts(); draw(); }
 
@@ -152,7 +157,7 @@ async function cardsView(set) {
   counts(); draw();
   show(
     h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: back }, '←'), h('h1', {}, set.name), h('span')),
-    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), learnBtn, list));
+    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, learnBtn), list));
 }
 
 // ----------------------------------------------------------------- import
@@ -339,6 +344,90 @@ async function editView(set) {
     h('main', { class: 'page stack' }, name, list,
       h('button', { class: 'btn', onclick: () => { rows.push({ card: null, term: '', def: '', deleted: false }); dirty = true; draw(); } }, '+ Add card'),
       saveBtn, fileIn));
+}
+
+// ------------------------------------------------------------- flashcards
+// Flip a card, then say whether you knew it. Doesn't change the review schedule.
+async function flashcardsView(set, cards, back = libraryView) {
+  if (!cards.length) return toast('No cards to study');
+  const imgs = await imageMap(set.id);
+  const dirPref = store.get('dir', 'def');
+  let deck = [], pos = 0, missed = [];
+  const exit = () => { keyHandler = null; revoke(imgs); back(); };
+
+  const bar = h('div', { style: 'width:0%' });
+  const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
+  const count = h('span', { class: 'muted count' });
+  const header = h('header', { class: 'topbar' },
+    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'), track, count);
+  const topbar = () => {
+    const pct = Math.round((pos / deck.length) * 100);
+    bar.style.width = `${pct}%`;
+    track.setAttribute('aria-valuenow', pct);
+    count.textContent = `${Math.min(pos + 1, deck.length)}/${deck.length}`;
+    return header;
+  };
+
+  function start(list) {
+    deck = shuffle(list).map((card) => ({ card, dir: dirPref === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : dirPref }));
+    pos = 0; missed = [];
+    showCard();
+  }
+
+  function showCard() {
+    if (pos >= deck.length) return summary();
+    const it = deck[pos];
+    const [frontLabel, backLabel] = it.dir === 'def' ? ['Term', 'Definition'] : ['Definition', 'Term'];
+    const [front, backSide] = it.dir === 'def' ? [it.card.term, it.card.def] : [it.card.def, it.card.term];
+    const face = (cls, label, side) => h('div', { class: `card face ${cls}` }, h('div', { class: 'label' }, label), renderSide(side, imgs));
+    let flipped = false;
+    const flipCard = h('div', { class: 'flip', role: 'button', tabindex: 0, 'aria-label': 'Flip card', onclick: (e) => {
+      if (!e.target.closest('img.zoomable')) flip();
+    } }, h('div', { class: 'flip-inner' }, face('front', frontLabel, front), face('back', backLabel, backSide)));
+    const actions = h('div', { class: 'actions' });
+    const answer = (knew) => { if (!knew) missed.push(it.card); pos++; showCard(); };
+
+    function flip() {
+      flipped = !flipped;
+      flipCard.classList.toggle('flipped', flipped);
+      if (flipped && !actions.querySelector('.knew')) {
+        actions.replaceChildren(h('div', { class: 'row' },
+          h('button', { class: 'btn missed', onclick: () => answer(false) }, "✗ Didn't know"),
+          h('button', { class: 'btn knew', onclick: () => answer(true) }, '✓ Knew it')));
+      }
+    }
+
+    actions.append(h('button', { class: 'btn primary', onclick: flip }, 'Flip'));
+    keyHandler = (e) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); return; }
+      if (!actions.querySelector('.knew')) return;
+      if (e.key === 'ArrowRight' || e.key === '2') answer(true);
+      else if (e.key === 'ArrowLeft' || e.key === '1') answer(false);
+    };
+    show(topbar(),
+      h('main', { class: 'page stack flash-page' }, flipCard, h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
+      actions);
+  }
+
+  function summary() {
+    const knew = deck.length - missed.length;
+    const again = missed;
+    const primary = again.length
+      ? h('button', { class: 'btn primary', onclick: () => start(again) }, `Review ${again.length} missed card${again.length === 1 ? '' : 's'}`)
+      : h('button', { class: 'btn primary', onclick: exit }, 'Done');
+    keyHandler = (e) => e.key === 'Enter' && primary.click();
+    show(topbar(),
+      h('main', { class: 'page stack center' },
+        h('div', { class: 'big' }, again.length ? '💪' : '🏁'),
+        h('h2', {}, again.length ? 'Round complete' : 'You knew them all!'),
+        h('p', {}, `Knew ${knew} of ${deck.length}`),
+        again.length ? h('p', { class: 'muted' }, `${again.length} still learning`) : null),
+      h('div', { class: 'actions' }, primary,
+        h('button', { class: 'btn', onclick: () => start(cards) }, `Restart all ${cards.length}`),
+        again.length ? h('button', { class: 'btn ghost', onclick: exit }, 'Done') : null));
+  }
+
+  start(cards);
 }
 
 // ------------------------------------------------------------------ study

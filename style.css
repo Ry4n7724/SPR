@@ -140,3 +140,20 @@ input.answer { border-width: 2px; }
 .edit-card { position: absolute; top: 2px; right: 2px; min-width: 44px; min-height: 44px; font-size: 16px; }
 .modal { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-end; justify-content: center; }
 .modal-body { width: 100%; max-width: 560px; max-height: 90dvh; overflow: auto; border-radius: 16px 16px 0 0; padding-bottom: calc(14px + var(--safe-b)); }
+
+/* flashcards */
+.flash-page { display: flex; }
+.flip { flex: 1; display: flex; perspective: 1200px; cursor: pointer; outline: none; }
+.flip-inner { flex: 1; display: grid; min-height: 52vh; min-height: 52dvh; transition: transform .45s; transform-style: preserve-3d; }
+.flip.flipped .flip-inner { transform: rotateY(180deg); }
+.face {
+  grid-area: 1 / 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 18px; text-align: center; font-size: 22px; font-weight: 600;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+}
+.face > .label { position: absolute; top: 14px; left: 16px; margin: 0; }
+.face.back { transform: rotateY(180deg); }
+.flip:focus-visible .face { border-color: var(--accent); }
+.btn.knew { border: 2px solid var(--ok); color: var(--ok); background: var(--ok-bg); }
+.btn.missed { border: 2px solid var(--bad); color: var(--bad); background: var(--bad-bg); }
+@media (prefers-reduced-motion: reduce) { .flip-inner { transition: none; } }
