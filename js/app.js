@@ -2,6 +2,7 @@ import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
 import { Session, buildPool, isDue, dayNum, modesFor, shuffle } from './learn.js';
+import { icon } from './icons.js';
 
 const app = document.getElementById('app');
 const show = (...els) => { app.replaceChildren(...els); window.scrollTo(0, 0); };
@@ -33,6 +34,38 @@ async function imageMap(setId) {
 }
 const revoke = (map) => map && map.forEach((u) => URL.revokeObjectURL(u));
 
+// ---------------------------------------------------------------- helpers
+// Back/close button + title + spacer, used by every plain view.
+const topbarNav = (onBack, title, iconName = 'back') => h('header', { class: 'topbar' },
+  h('button', { class: 'icon', 'aria-label': iconName === 'back' ? 'Back' : 'Close', onclick: onBack }, icon(iconName)),
+  h('h1', {}, title), h('span'));
+
+// Close button + progress bar + counter. Built once and updated in place so the width transition animates.
+function progressHeader(onExit) {
+  const bar = h('div', { style: 'width:0%' });
+  const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
+  const count = h('span', { class: 'muted count' });
+  const header = h('header', { class: 'topbar' },
+    h('button', { class: 'icon', 'aria-label': 'Close', onclick: onExit }, icon('close')), track, count);
+  return {
+    header,
+    update(pct, text) { bar.style.width = `${pct}%`; track.setAttribute('aria-valuenow', pct); count.textContent = text; },
+  };
+}
+
+function setStats(cards, today) {
+  const total = cards.length;
+  const learned = cards.filter((c) => c.state === 'review').length;
+  const due = cards.filter((c) => isDue(c, today)).length;
+  const fresh = cards.filter((c) => c.state === 'new').length;
+  const starred = cards.filter((c) => c.starred).length;
+  return { total, learned, due, fresh, starred, todo: due + Math.min(fresh, 15), pct: total ? Math.round((learned / total) * 100) : 0 };
+}
+const statsLine = (st) => `${st.total} cards · ${st.due} due · ${st.fresh} new${st.starred ? ` · ${st.starred} starred` : ''}`;
+const progressBar = (pct) => h('div', {
+  class: 'progress', role: 'progressbar', 'aria-label': 'Learned', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct,
+}, h('div', { style: `width:${pct}%` }));
+
 // ---------------------------------------------------------------- library
 async function libraryView() {
   keyHandler = null;
@@ -45,36 +78,23 @@ async function libraryView() {
   const list = h('div', { class: 'list' });
   for (const s of sets) {
     const cards = await db.getCards(s.id);
-    const due = cards.filter((c) => isDue(c, today)).length;
-    const fresh = cards.filter((c) => c.state === 'new').length;
-    const todo = due + Math.min(fresh, 15);
+    const st = setStats(cards, today);
     const saved = await db.getSession(s.id);
-    const starred = cards.filter((c) => c.starred).length;
-    list.append(h('div', { class: 'card set' },
+    const primary = saved
+      ? h('button', { class: 'btn primary', onclick: () => study(s, saved.mode, true) },
+        `Resume ${saved.mode === 'learn' ? 'learn' : saved.mode === 'starred' ? 'starred' : 'practice'} (${saved.mastered}/${saved.total})`)
+      : h('button', { class: 'btn primary', disabled: st.todo === 0, onclick: () => study(s, 'learn') },
+        st.todo ? `Learn (${st.todo})` : 'All done today');
+    // The whole card opens the set page; the button inside must not.
+    primary.addEventListener('click', (e) => e.stopPropagation());
+    list.append(h('div', { class: 'card set clickable', onclick: () => setView(s) },
       h('div', { class: 'set-head' },
-        h('div', { class: 'grow clickable', onclick: () => cardsView(s) },
+        h('div', { class: 'grow' },
           h('div', { class: 'set-name' }, s.name),
-          h('div', { class: 'muted' }, `${cards.length} cards · ${due} due · ${fresh} new${starred ? ` · ${starred} ★` : ''}`)),
-        h('div', { class: 'row tight' },
-          h('button', { class: 'icon', 'aria-label': 'View cards', onclick: () => cardsView(s) }, '📖'),
-          h('button', { class: 'icon', 'aria-label': 'Flashcards', onclick: () => flashcardsView(s, cards) }, '🃏'),
-          h('button', { class: 'icon', 'aria-label': 'Set settings', onclick: () => settingsView(s) }, '⚙️'),
-          h('button', { class: 'icon', 'aria-label': 'Edit set', onclick: () => editView(s) }, '✏️'),
-          h('button', {
-            class: 'icon', 'aria-label': 'Delete set',
-            onclick: async () => { if (confirm(`Delete "${s.name}" and its progress?`)) { await db.deleteSet(s.id); libraryView(); } },
-          }, '🗑'))),
-      saved
-        ? h('div', { class: 'row' },
-          h('button', { class: 'btn primary', onclick: () => study(s, saved.mode, true) },
-            `Resume ${saved.mode === 'learn' ? 'learn' : saved.mode === 'starred' ? 'starred' : 'practice'} (${saved.mastered}/${saved.total})`),
-          h('button', { class: 'btn', onclick: async () => {
-            if (confirm(`Discard the saved session for "${s.name}"?`)) { await db.deleteSession(s.id); libraryView(); }
-          } }, 'Start over'))
-        : h('div', { class: 'row' },
-          h('button', { class: 'btn primary', disabled: todo === 0, onclick: () => study(s, 'learn') },
-            todo ? `Learn (${todo})` : 'All done today'),
-          h('button', { class: 'btn', onclick: () => study(s, 'practice') }, 'Practice all'))));
+          h('div', { class: 'muted' }, statsLine(st))),
+        icon('chevron', 'chev')),
+      progressBar(st.pct),
+      h('div', { class: 'row' }, primary)));
   }
 
   const backupIn = h('input', { type: 'file', accept: '.zip', hidden: true, onchange: async (e) => {
@@ -88,12 +108,12 @@ async function libraryView() {
   } });
 
   show(
-    h('header', { class: 'topbar' }, h('h1', {}, 'Spaced Cards'),
-      h('button', { class: 'btn primary small', onclick: importView }, '+ Import')),
+    h('header', { class: 'topbar' }, h('h1', {}, h('span', { class: 'dot' }), ' Spaced Cards'),
+      h('button', { class: 'btn primary small', onclick: importView }, icon('plus'), 'Import')),
     h('main', { class: 'page' },
       sets.length ? h('label', { class: 'inline' }, 'Answer with ', dirSel) : null,
       sets.length ? list : h('div', { class: 'empty' },
-        h('p', {}, '👋 No sets yet.'),
+        h('p', {}, h('span', { class: 'dot' }), ' No sets yet.'),
         h('p', { class: 'muted' }, 'Import a Quizlet export (text file) or a .zip with images. Tap Import to start.'),
         h('button', { class: 'btn primary', onclick: importView }, 'Import a set')),
       sets.length ? h('div', { class: 'row footer-row' },
@@ -107,28 +127,70 @@ async function libraryView() {
       backupIn));
 }
 
+// -------------------------------------------------------------------- hub
+// One page per set: progress overview plus every mode and action for it.
+async function setView(set) {
+  keyHandler = null;
+  // Re-read so a rename or settings change shows up without passing objects around.
+  set = (await db.getSets()).find((x) => x.id === set.id) || set;
+  const cards = await db.getCards(set.id);
+  const saved = await db.getSession(set.id);
+  const st = setStats(cards, dayNum());
+  const back = () => setView(set);
+  const tile = (name, title, sub, onclick, disabled = false) => h('button', { class: 'tile', disabled, onclick },
+    icon(name), h('span', { class: 'tile-title' }, title), h('span', { class: 'tile-sub' }, sub));
+  const modeLabel = { both: 'MC + written', mc: 'Multiple choice', write: 'Written' }[set.learnMode] || 'MC + written';
+
+  show(
+    topbarNav(libraryView, set.name),
+    h('main', { class: 'page stack' },
+      h('div', { class: 'hub-head' },
+        h('h2', { class: 'hub-title' }, set.name),
+        h('div', { class: 'row' }, h('div', { class: 'big-num' }, `${st.pct}%`), h('span', { class: 'muted' }, 'learned')),
+        progressBar(st.pct),
+        h('div', { class: 'muted' }, statsLine(st))),
+      h('div', { class: 'tiles' },
+        tile('cards', 'Flashcards', `${st.total} cards`, () => flashcardsView(set, cards, back)),
+        saved
+          ? tile('learn', 'Resume', `${saved.mastered}/${saved.total}`, () => study(set, saved.mode, true, back))
+          : tile('learn', 'Learn', st.todo ? `${st.todo} to do` : 'All done today', () => study(set, 'learn', false, back), st.todo === 0),
+        tile('play', 'Practice all', 'No scheduling', () => study(set, 'practice', false, back)),
+        tile('book', 'Cards', `${st.total}`, () => cardsView(set)),
+        tile('star', 'Starred', `${st.starred}`, () => cardsView(set, 'starred'), st.starred === 0),
+        tile('gear', 'Settings', modeLabel, () => settingsView(set))),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', onclick: () => editView(set) }, icon('pencil'), 'Edit'),
+        h('button', { class: 'btn small', onclick: async () => {
+          if (confirm(`Delete "${set.name}" and its progress?`)) { await db.deleteSet(set.id); libraryView(); }
+        } }, icon('trash'), 'Delete'),
+        saved ? h('button', { class: 'btn small', onclick: async () => {
+          if (confirm(`Discard the saved session for "${set.name}"?`)) { await db.deleteSession(set.id); setView(set); }
+        } }, icon('refresh'), 'Start over') : null)));
+}
+
 // ------------------------------------------------------------------ cards
-async function cardsView(set) {
+async function cardsView(set, initialFilter) {
   keyHandler = null;
   const cards = await db.getCards(set.id);
   const imgs = await imageMap(set.id);
   const key = `filter-${set.id}`;
-  let filter = store.get(key, 'all');
-  const back = () => { revoke(imgs); libraryView(); };
+  if (initialFilter) store.set(key, initialFilter);
+  let filter = initialFilter || store.get(key, 'all');
+  const back = () => { revoke(imgs); setView(set); };
 
   const allBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('all') });
   const starBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('starred') });
   const learnBtn = h('button', { class: 'btn primary', onclick: () => { revoke(imgs); study(set, 'starred', false, () => cardsView(set)); } });
   const flashBtn = h('button', { class: 'btn', onclick: () => {
     revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set));
-  } }, '🃏 Flashcards');
+  } }, icon('cards'), 'Flashcards');
   const list = h('div', { class: 'stack' });
 
   const starCount = () => cards.filter((c) => c.starred).length;
   function counts() {
     const m = starCount();
     allBtn.textContent = `All (${cards.length})`;
-    starBtn.textContent = `★ Starred (${m})`;
+    starBtn.textContent = `Starred (${m})`;
     allBtn.classList.toggle('on', filter === 'all');
     starBtn.classList.toggle('on', filter === 'starred');
     learnBtn.textContent = `Learn starred (${m})`;
@@ -141,7 +203,7 @@ async function cardsView(set) {
     const shown = cards.filter((c) => filter === 'all' || c.starred);
     list.replaceChildren(...(shown.length ? shown.map((c) => {
       const star = h('button', { class: 'icon star', 'aria-label': 'Star card' });
-      const paint = () => { star.textContent = c.starred ? '★' : '☆'; star.classList.toggle('on', !!c.starred); };
+      const paint = () => { star.replaceChildren(icon(c.starred ? 'starFill' : 'star')); star.classList.toggle('on', !!c.starred); };
       star.onclick = async () => {
         c.starred = !c.starred;
         paint(); counts();
@@ -151,12 +213,12 @@ async function cardsView(set) {
       return h('div', { class: 'card term-row' },
         h('div', { class: 'grow' }, renderSide(c.term, imgs), h('hr'), h('div', { class: 'def' }, renderSide(c.def, imgs))),
         star);
-    }) : [h('p', { class: 'muted' }, 'No starred cards yet. Tap ☆ on a card to star it.')]));
+    }) : [h('p', { class: 'muted' }, 'No starred cards yet. Tap the star on a card to star it.')]));
   }
 
   counts(); draw();
   show(
-    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: back }, '←'), h('h1', {}, set.name), h('span')),
+    topbarNav(back, set.name),
     h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, learnBtn), list));
 }
 
@@ -225,9 +287,9 @@ function importView() {
   });
 
   show(
-    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: libraryView }, '←'), h('h1', {}, 'Import set'), h('span')),
+    topbarNav(libraryView, 'Import set'),
     h('main', { class: 'page stack' },
-      h('button', { class: 'btn primary', onclick: () => fileIn.click() }, '📁 Choose file(s)'),
+      h('button', { class: 'btn primary', onclick: () => fileIn.click() }, icon('folder'), 'Choose file(s)'),
       h('p', { class: 'muted small-text' }, 'Pick a .txt/.csv export, a .zip (text file + images), or a text file together with image files.'),
       fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
 }
@@ -242,7 +304,7 @@ function settingsView(set) {
     toast('Saved');
   } }, ...options.map(([v, l]) => h('option', { value: v, selected: (set.learnMode || 'both') === v }, l)));
   show(
-    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: libraryView }, '←'), h('h1', {}, 'Settings'), h('span')),
+    topbarNav(() => setView(set), 'Settings'),
     h('main', { class: 'page stack' },
       h('div', { class: 'set-name' }, set.name),
       h('label', { class: 'field' }, 'Learn mode', sel),
@@ -299,17 +361,17 @@ async function editView(set) {
         };
         return h('div', { class: 'edit-field' },
           h('div', { class: 'row edit-label' }, h('span', { class: 'label grow' }, label),
-            h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, hasImg ? '🖼 Change image' : '🖼 Image'),
-            hasImg ? h('button', { class: 'btn small', type: 'button', onclick: removeImage }, '✕ Remove image') : null),
+            h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, icon('image'), hasImg ? 'Change image' : 'Image'),
+            hasImg ? h('button', { class: 'btn small', type: 'button', onclick: removeImage }, icon('x'), 'Remove image') : null),
           ta, prev);
       };
       return h('div', { class: 'card stack' },
         field('term', 'Term'), field('def', 'Definition'),
-        h('button', { class: 'btn small', onclick: () => { row.deleted = true; dirty = true; draw(); } }, '🗑 Delete card'));
+        h('button', { class: 'btn small', onclick: () => { row.deleted = true; dirty = true; draw(); } }, icon('trash'), 'Delete card'));
     }));
   }
 
-  const back = () => { if (!dirty || confirm('Discard your changes?')) { cleanup(); libraryView(); } };
+  const back = () => { if (!dirty || confirm('Discard your changes?')) { cleanup(); setView(set); } };
 
   const save = async () => {
     const live = rows.filter((r) => !r.deleted && (r.term.trim() || r.def.trim()));
@@ -329,20 +391,21 @@ async function editView(set) {
     const used = imagesUsed([...upd, ...fresh].map((c) => [c.term, c.def]));
     if (removed.length) await db.deleteMany('cards', removed);
     await db.putMany('cards', [...upd, ...fresh]);
-    await db.putMany('sets', [{ ...set, name: name.value.trim(), count: upd.length + fresh.length }]);
+    const updated = { ...set, name: name.value.trim(), count: upd.length + fresh.length };
+    await db.putMany('sets', [updated]);
     const keep = [...blobs].filter(([k]) => used.has(k));
     if (keep.length) await db.putMany('images', keep.map(([k, v]) => ({ key: `${set.id}/${k}`, setId: set.id, name: v.name, blob: v.blob })));
     const drop = storedImgs.map((im) => `${set.id}/${im.name.toLowerCase()}`).filter((key) => !used.has(key.slice(set.id.length + 1)));
     if (drop.length) await db.deleteMany('images', drop);
-    cleanup(); toast('Set saved'); libraryView();
+    cleanup(); toast('Set saved'); setView(updated);
   };
 
   const saveBtn = h('button', { class: 'btn primary', onclick: save }, 'Save');
   draw();
   show(
-    h('header', { class: 'topbar' }, h('button', { class: 'icon', 'aria-label': 'Back', onclick: back }, '←'), h('h1', {}, 'Edit set'), h('span')),
+    topbarNav(back, 'Edit set'),
     h('main', { class: 'page stack' }, name, list,
-      h('button', { class: 'btn', onclick: () => { rows.push({ card: null, term: '', def: '', deleted: false }); dirty = true; draw(); } }, '+ Add card'),
+      h('button', { class: 'btn', onclick: () => { rows.push({ card: null, term: '', def: '', deleted: false }); dirty = true; draw(); } }, icon('plus'), 'Add card'),
       saveBtn, fileIn));
 }
 
@@ -355,16 +418,9 @@ async function flashcardsView(set, cards, back = libraryView) {
   let deck = [], pos = 0, missed = [];
   const exit = () => { keyHandler = null; revoke(imgs); back(); };
 
-  const bar = h('div', { style: 'width:0%' });
-  const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
-  const count = h('span', { class: 'muted count' });
-  const header = h('header', { class: 'topbar' },
-    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'), track, count);
+  const { header, update } = progressHeader(exit);
   const topbar = () => {
-    const pct = Math.round((pos / deck.length) * 100);
-    bar.style.width = `${pct}%`;
-    track.setAttribute('aria-valuenow', pct);
-    count.textContent = `${Math.min(pos + 1, deck.length)}/${deck.length}`;
+    update(Math.round((pos / deck.length) * 100), `${Math.min(pos + 1, deck.length)}/${deck.length}`);
     return header;
   };
 
@@ -392,8 +448,8 @@ async function flashcardsView(set, cards, back = libraryView) {
       flipCard.classList.toggle('flipped', flipped);
       if (flipped && !actions.querySelector('.knew')) {
         actions.replaceChildren(h('div', { class: 'row' },
-          h('button', { class: 'btn missed', onclick: () => answer(false) }, "✗ Didn't know"),
-          h('button', { class: 'btn knew', onclick: () => answer(true) }, '✓ Knew it')));
+          h('button', { class: 'btn missed', onclick: () => answer(false) }, icon('x'), "Didn't know"),
+          h('button', { class: 'btn knew', onclick: () => answer(true) }, icon('check'), 'Knew it')));
       }
     }
 
@@ -418,10 +474,9 @@ async function flashcardsView(set, cards, back = libraryView) {
     keyHandler = (e) => e.key === 'Enter' && primary.click();
     show(topbar(),
       h('main', { class: 'page stack center' },
-        h('div', { class: 'big' }, again.length ? '💪' : '🏁'),
-        h('h2', {}, again.length ? 'Round complete' : 'You knew them all!'),
-        h('p', {}, `Knew ${knew} of ${deck.length}`),
-        again.length ? h('p', { class: 'muted' }, `${again.length} still learning`) : null),
+        h('div', { class: 'big-num' }, `${knew}/${deck.length}`),
+        h('h2', {}, again.length ? 'Round complete' : 'You knew them all'),
+        h('p', { class: 'muted' }, `Knew ${knew} of ${deck.length}${again.length ? ` · ${again.length} still learning` : ''}`)),
       h('div', { class: 'actions' }, primary,
         h('button', { class: 'btn', onclick: () => start(cards) }, `Restart all ${cards.length}`),
         again.length ? h('button', { class: 'btn ghost', onclick: exit }, 'Done') : null));
@@ -450,19 +505,12 @@ async function study(set, mode, resume = false, back = libraryView) {
   const persist = () => (session.finished
     ? db.deleteSession(set.id)
     : db.saveSession({ setId: set.id, ...session.toJSON() })).catch(() => {});
-  const exit = () => { keyHandler = null; revoke(imgs); back(); };
+  let closed = false;
+  const exit = () => { closed = true; keyHandler = null; revoke(imgs); back(); };
 
-  // Built once and updated in place so the width transition animates.
-  const bar = h('div', { style: 'width:0%' });
-  const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
-  const count = h('span', { class: 'muted count' });
-  const header = h('header', { class: 'topbar' },
-    h('button', { class: 'icon', 'aria-label': 'Close', onclick: exit }, '✕'), track, count);
+  const { header, update } = progressHeader(exit);
   const topbar = () => {
-    const pct = Math.round(session.progress * 100);
-    bar.style.width = `${pct}%`;
-    track.setAttribute('aria-valuenow', pct);
-    count.textContent = `${session.mastered}/${session.total}`;
+    update(Math.round(session.progress * 100), `${session.mastered}/${session.total}`);
     return header;
   };
 
@@ -491,7 +539,7 @@ async function study(set, mode, resume = false, back = libraryView) {
       close();
     };
     const box = h('div', { class: 'modal' },
-      h('div', { class: 'card stack modal-body' }, h('h2', {}, 'Edit card'), termEl, defEl,
+      h('div', { class: 'card stack modal-body' }, h('div', { class: 'handle' }), h('h2', {}, 'Edit card'), termEl, defEl,
         h('div', { class: 'row' },
           h('button', { class: 'btn', onclick: close }, 'Cancel'),
           h('button', { class: 'btn primary', onclick: save }, 'Save'))));
@@ -509,9 +557,9 @@ async function study(set, mode, resume = false, back = libraryView) {
     keyHandler = (e) => e.key === 'Enter' && nextRound();
     const rows = session.items.map((it) => h('div', { class: 'card sum-row' },
       h('div', { class: 'grow' }, renderSide(session.prompt(it), imgs)),
-      h('span', { class: it.misses ? 'bad-pill' : 'ok-pill' }, it.misses ? `${it.misses} miss${it.misses > 1 ? 'es' : ''}` : '✓')));
+      h('span', { class: it.misses ? 'bad-pill' : 'ok-pill' }, it.misses ? `${it.misses} miss${it.misses > 1 ? 'es' : ''}` : icon('check'))));
     show(topbar(),
-      h('main', { class: 'page stack' }, h('h2', {}, `Round ${session.round} complete 🎉`), ...rows),
+      h('main', { class: 'page stack' }, h('h2', {}, h('span', { class: 'dot' }), ` Round ${session.round} complete`), ...rows),
       h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: nextRound }, session.pending.length ? 'Next round' : 'Finish')));
   }
 
@@ -520,7 +568,7 @@ async function study(set, mode, resume = false, back = libraryView) {
     persist();
     show(topbar(),
       h('main', { class: 'page stack center' },
-        h('div', { class: 'big' }, '🏁'), h('h2', {}, 'Session complete'),
+        h('div', { class: 'big-num' }, `${session.perfect}/${session.total}`), h('h2', {}, 'Session complete'),
         h('p', {}, `${session.total} cards studied · ${session.perfect} correct first time`),
         mode === 'learn' ? h('p', { class: 'muted' }, 'Your next reviews have been scheduled.') : null),
       h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: exit }, 'Done')));
@@ -533,13 +581,13 @@ async function study(set, mode, resume = false, back = libraryView) {
     const label = it.dir === 'def' ? 'Term' : 'Definition';
     const answerLabel = it.dir === 'def' ? 'Definition' : 'Term';
     const answer = session.answer(it);
-    const starBtn = h('button', { class: 'icon star-card', 'aria-label': 'Star card' }, it.card.starred ? '★' : '☆');
+    const starBtn = h('button', { class: 'icon star-card', 'aria-label': 'Star card' }, icon(it.card.starred ? 'starFill' : 'star'));
     starBtn.onclick = async () => {
       const card = { ...it.card, starred: !it.card.starred };
       it.card = card;
       const i = cards.findIndex((c) => c.id === card.id);
       if (i >= 0) cards[i] = card;
-      starBtn.textContent = card.starred ? '★' : '☆';
+      starBtn.replaceChildren(icon(card.starred ? 'starFill' : 'star'));
       starBtn.classList.toggle('on', !!card.starred);
       await db.putMany('cards', [card]);
       persist();
@@ -547,7 +595,7 @@ async function study(set, mode, resume = false, back = libraryView) {
     starBtn.classList.toggle('on', !!it.card.starred);
     const promptBox = h('div', { class: 'card prompt' },
       starBtn,
-      h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, '✏️'),
+      h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, icon('pencil')),
       h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
     const stage = h('div', { class: 'stage' });
     const actions = h('div', { class: 'actions' });
@@ -558,7 +606,8 @@ async function study(set, mode, resume = false, back = libraryView) {
       session.submit(ok);
       persist();
       keyHandler = null;
-      if (delay) setTimeout(question, delay); else question();
+      // Leaving during the short "correct" pause must not re-render the question over the next view.
+      if (delay) setTimeout(() => { if (!closed) question(); }, delay); else question();
     };
     const waitContinue = (ok) => {
       actions.replaceChildren(h('button', { class: 'btn primary', onclick: () => proceed(ok) }, 'Continue'));

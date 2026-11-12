@@ -1,7 +1,7 @@
 // Stale-while-revalidate cache of the app files so the app opens offline.
-const CACHE = 'spaced-cards-v11';
+const CACHE = 'spaced-cards-v12';
 const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
-  'js/app.js', 'js/content.js', 'js/db.js', 'js/import.js', 'js/learn.js', 'js/vendor/jszip.min.js'];
+  'js/app.js', 'js/content.js', 'js/db.js', 'js/icons.js', 'js/import.js', 'js/learn.js', 'js/vendor/jszip.min.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

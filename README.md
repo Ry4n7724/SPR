@@ -8,11 +8,13 @@ A small spaced-repetition app in the style of Quizlet's **Learn** mode. It is a 
 2. In the app tap **+ Import** and either choose the file or paste the text. A preview shows the cards it found. Pick other separators if you used custom ones.
 3. Tap **Learn** on a set. Cards that are due (plus up to 15 new ones) come in rounds of 7: first multiple choice, then typing the answer. A wrong typed answer has to be retyped correctly before you can continue. Misses come back until you get them right. Finished cards are scheduled for later days (1 → 3 → longer, SM-2 style). **Practice all** studies everything without changing the schedule.
 
+Each set on the library screen shows how much of it is learned. Tapping a set opens its page with **Flashcards**, **Learn** (or **Resume**), **Practice all**, **Cards**, **Starred** and **Settings** tiles, plus **Edit** and **Delete** buttons underneath.
+
 "Answer with" on the library screen picks whether you are asked for the definition, the term, or both.
 
 ### Flashcards
 
-Tap 🃏 on a set (or **🃏 Flashcards** in the card list, which follows the All/Starred filter). Tap the card to flip it, then choose **✓ Knew it** or **✗ Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change the review schedule.
+Tap **Flashcards** on the set page (or in the card list, where it follows the All/Starred filter). Tap the card to flip it, then choose **Knew it** or **Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change the review schedule.
 
 ### Images
 
@@ -26,19 +28,19 @@ Try `sample/sample.txt` (text only) and `sample/shapes.zip` (with images).
 
 ### Set settings and resuming
 
-Tap ⚙️ on a set to choose its learn mode: multiple choice then written (default), multiple choice only, or written only. It applies to the next session.
+Tap **Settings** on the set page to choose its learn mode: multiple choice then written (default), multiple choice only, or written only. It applies to the next session.
 
-While studying, tap ✏️ on the question to fix the current card's term or definition.
+While studying, tap the pencil on the question to fix the current card's term or definition.
 
-Progress is saved after every answer. If you close a session (✕) or the app, the set shows **Resume** (with progress) and **Start over** next time.
+Progress is saved after every answer. If you close a session or the app, the set shows **Resume** (with progress) and **Start over** next time.
 
 ### Viewing and starring cards
 
-Tap 📖 (or the set name) to see all cards with their definitions and images. Tap ☆ to star a card, switch between **All** and **Starred**, and tap **Learn starred** to study only the starred cards. You can also star the current card with ☆ while studying. Starred sessions don't change the review schedule.
+Tap **Cards** on the set page to see all cards with their definitions and images. Tap the star to star a card, switch between **All** and **Starred**, and tap **Learn starred** to study only the starred cards. The **Starred** tile opens the list already filtered. You can also star the current card while studying. Starred sessions don't change the review schedule.
 
 ### Editing a set
 
-Tap ✏️ on a set to rename it, change card text, add or delete cards, and add or replace images (🖼). Learning progress of existing cards is kept.
+Tap **Edit** on the set page to rename it, change card text, add or delete cards, and add or replace images. Learning progress of existing cards is kept.
 
 ### Your data
 
