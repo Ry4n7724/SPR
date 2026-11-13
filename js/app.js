@@ -9,7 +9,11 @@ const show = (...els) => { app.replaceChildren(...els); window.scrollTo(0, 0); }
 const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
+  json(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
 };
+// Flashcard position per set and scope ('all' or 'starred').
+const flashKey = (setId, scope) => `flash-${setId}-${scope}`;
 let keyHandler = null;
 document.addEventListener('keydown', (e) => keyHandler && keyHandler(e));
 
@@ -135,6 +139,7 @@ async function setView(set) {
   set = (await db.getSets()).find((x) => x.id === set.id) || set;
   const cards = await db.getCards(set.id);
   const saved = await db.getSession(set.id);
+  const flash = store.json(flashKey(set.id, 'all'));
   const st = setStats(cards, dayNum());
   const back = () => setView(set);
   const tile = (name, title, sub, onclick, disabled = false) => h('button', { class: 'tile', disabled, onclick },
@@ -150,7 +155,8 @@ async function setView(set) {
         progressBar(st.pct),
         h('div', { class: 'muted' }, statsLine(st))),
       h('div', { class: 'tiles' },
-        tile('cards', 'Flashcards', `${st.total} cards`, () => flashcardsView(set, cards, back)),
+        tile('cards', 'Flashcards', flash ? `Resume ${Math.min(flash.pos, flash.deck.length)}/${flash.deck.length}` : `${st.total} cards`,
+          () => flashcardsView(set, cards, back, 'all')),
         saved
           ? tile('learn', 'Resume', `${saved.mastered}/${saved.total}`, () => study(set, saved.mode, true, back))
           : tile('learn', 'Learn', st.todo ? `${st.todo} to do` : 'All done today', () => study(set, 'learn', false, back), st.todo === 0),
@@ -163,8 +169,11 @@ async function setView(set) {
         h('button', { class: 'btn small', onclick: async () => {
           if (confirm(`Delete "${set.name}" and its progress?`)) { await db.deleteSet(set.id); libraryView(); }
         } }, icon('trash'), 'Delete'),
-        saved ? h('button', { class: 'btn small', onclick: async () => {
-          if (confirm(`Discard the saved session for "${set.name}"?`)) { await db.deleteSession(set.id); setView(set); }
+        saved || flash ? h('button', { class: 'btn small', onclick: async () => {
+          if (!confirm(`Discard the saved progress for "${set.name}"?`)) return;
+          await db.deleteSession(set.id);
+          store.del(flashKey(set.id, 'all')); store.del(flashKey(set.id, 'starred'));
+          setView(set);
         } }, icon('refresh'), 'Start over') : null)));
 }
 
@@ -182,7 +191,7 @@ async function cardsView(set, initialFilter) {
   const starBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('starred') });
   const learnBtn = h('button', { class: 'btn primary', onclick: () => { revoke(imgs); study(set, 'starred', false, () => cardsView(set)); } });
   const flashBtn = h('button', { class: 'btn', onclick: () => {
-    revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set));
+    revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set), filter);
   } }, icon('cards'), 'Flashcards');
   const list = h('div', { class: 'stack' });
 
@@ -411,12 +420,16 @@ async function editView(set) {
 
 // ------------------------------------------------------------- flashcards
 // Flip a card, then say whether you knew it. Doesn't change the review schedule.
-async function flashcardsView(set, cards, back = libraryView) {
+// The position is saved after every answer so reopening continues where you left off.
+async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
   if (!cards.length) return toast('No cards to study');
   const imgs = await imageMap(set.id);
   const dirPref = store.get('dir', 'def');
+  const key = flashKey(set.id, scope);
   let deck = [], pos = 0, missed = [];
   const exit = () => { keyHandler = null; revoke(imgs); back(); };
+  const persist = () => store.set(key, JSON.stringify({
+    deck: deck.map((it) => [it.card.id, it.dir]), pos, missed: missed.map((c) => c.id) }));
 
   const { header, update } = progressHeader(exit);
   const topbar = () => {
@@ -427,7 +440,22 @@ async function flashcardsView(set, cards, back = libraryView) {
   function start(list) {
     deck = shuffle(list).map((card) => ({ card, dir: dirPref === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : dirPref }));
     pos = 0; missed = [];
+    persist();
     showCard();
+  }
+
+  // Rebuild a saved deck. Cards deleted since are dropped. Returns false if nothing is left.
+  function restore() {
+    const saved = store.json(key);
+    if (!saved || !Array.isArray(saved.deck)) return false;
+    const byId = new Map(cards.map((c) => [c.id, c]));
+    // Count dropped cards before the saved position so it still points at the same card.
+    const before = saved.deck.slice(0, saved.pos).filter(([id]) => !byId.has(id)).length;
+    deck = saved.deck.filter(([id]) => byId.has(id)).map(([id, dir]) => ({ card: byId.get(id), dir }));
+    if (!deck.length) return false;
+    pos = Math.min(Math.max(0, saved.pos - before), deck.length);
+    missed = (saved.missed || []).filter((id) => byId.has(id)).map((id) => byId.get(id));
+    return true;
   }
 
   function showCard() {
@@ -441,7 +469,7 @@ async function flashcardsView(set, cards, back = libraryView) {
       if (!e.target.closest('img.zoomable')) flip();
     } }, h('div', { class: 'flip-inner' }, face('front', frontLabel, front), face('back', backLabel, backSide)));
     const actions = h('div', { class: 'actions' });
-    const answer = (knew) => { if (!knew) missed.push(it.card); pos++; showCard(); };
+    const answer = (knew) => { if (!knew) missed.push(it.card); pos++; persist(); showCard(); };
 
     function flip() {
       flipped = !flipped;
@@ -468,9 +496,12 @@ async function flashcardsView(set, cards, back = libraryView) {
   function summary() {
     const knew = deck.length - missed.length;
     const again = missed;
+    // All known: nothing left to continue. Otherwise keep the summary until Done.
+    if (!again.length) store.del(key);
+    const done = () => { store.del(key); exit(); };
     const primary = again.length
       ? h('button', { class: 'btn primary', onclick: () => start(again) }, `Review ${again.length} missed card${again.length === 1 ? '' : 's'}`)
-      : h('button', { class: 'btn primary', onclick: exit }, 'Done');
+      : h('button', { class: 'btn primary', onclick: done }, 'Done');
     keyHandler = (e) => e.key === 'Enter' && primary.click();
     show(topbar(),
       h('main', { class: 'page stack center' },
@@ -479,10 +510,13 @@ async function flashcardsView(set, cards, back = libraryView) {
         h('p', { class: 'muted' }, `Knew ${knew} of ${deck.length}${again.length ? ` · ${again.length} still learning` : ''}`)),
       h('div', { class: 'actions' }, primary,
         h('button', { class: 'btn', onclick: () => start(cards) }, `Restart all ${cards.length}`),
-        again.length ? h('button', { class: 'btn ghost', onclick: exit }, 'Done') : null));
+        again.length ? h('button', { class: 'btn ghost', onclick: done }, 'Done') : null));
   }
 
-  start(cards);
+  if (restore()) {
+    if (pos < deck.length) toast(`Continuing at ${pos + 1}/${deck.length}`);
+    showCard();
+  } else start(cards);
 }
 
 // ------------------------------------------------------------------ study
