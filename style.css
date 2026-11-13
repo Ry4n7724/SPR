@@ -29,7 +29,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; width: 100%; 
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: calc(10px + var(--safe-t)) 16px 10px; position: sticky; top: 0; z-index: 5;
+  padding: calc(10px + var(--safe-t)) 16px 10px; position: sticky; top: 0; z-index: 10; transform: translateZ(0);
   background: var(--bg); border-bottom: 1px solid var(--line);
 }
 .topbar h1 { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
@@ -205,13 +205,16 @@ input.answer { border-width: 1px; }
 
 /* flashcards */
 .flash-page { display: flex; }
-.flip { flex: 1; display: flex; perspective: 1200px; cursor: pointer; outline: none; }
-.flip-inner { flex: 1; display: grid; min-height: 52vh; min-height: 52dvh; transition: transform .5s cubic-bezier(.2, .8, .2, 1); transform-style: preserve-3d; }
+/* Flashcard views fit the viewport so the top bar and actions never scroll away (iOS Safari). */
+#app:has(.flash-page, .study-flip) { height: 100vh; height: 100dvh; min-height: 0; }
+.flash-page, .study-flip { min-height: 0; }
+.flip { flex: 1; display: flex; perspective: 1200px; cursor: pointer; outline: none; min-height: 0; position: relative; z-index: 0; isolation: isolate; }
+.flip-inner { flex: 1; display: grid; min-height: 0; transition: transform .5s cubic-bezier(.2, .8, .2, 1); transform-style: preserve-3d; }
 .flip.flipped .flip-inner { transform: rotateY(180deg); }
 .face {
   grid-area: 1 / 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 40px 18px; text-align: center; font-size: 22px; font-weight: 500;
-  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; min-height: 0;
 }
 .face > .label { position: absolute; top: 14px; left: 16px; margin: 0; }
 .face::after { content: ""; position: absolute; right: 16px; bottom: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
@@ -221,7 +224,11 @@ input.answer { border-width: 1px; }
 .study-flip { display: flex; flex-direction: column; }
 .flip-tools { display: flex; justify-content: space-between; }
 .flip-tools .star-card, .flip-tools .edit-card { position: static; }
-.study-flip .flip-inner { min-height: 40vh; min-height: 40dvh; }
+/* very short screens (landscape): go back to a scrolling page with a minimum card height */
+@media (max-height: 500px) {
+  #app:has(.flash-page, .study-flip) { height: auto; min-height: 100dvh; }
+  .flip-inner { min-height: 260px; }
+}
 .btn.knew { border-color: var(--ok); color: var(--ok); background: transparent; }
 .btn.missed { border-color: var(--bad); color: var(--bad); background: transparent; }
 .btn.knew:hover:not(:disabled) { background: var(--ok-bg); }
