@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
-import { Session, buildPool, isDue, dayNum, modesFor, shuffle } from './learn.js';
+import { Session, buildPool, isDue, dayNum, modesFor, shuffle, STAGES, STAGE_NAMES } from './learn.js';
 import { icon } from './icons.js';
 
 const app = document.getElementById('app');
@@ -144,7 +144,7 @@ async function setView(set) {
   const back = () => setView(set);
   const tile = (name, title, sub, onclick, disabled = false) => h('button', { class: 'tile', disabled, onclick },
     icon(name), h('span', { class: 'tile-title' }, title), h('span', { class: 'tile-sub' }, sub));
-  const modeLabel = { both: 'MC + written', mc: 'Multiple choice', write: 'Written', all: 'Flash + MC + written' }[set.learnMode] || 'MC + written';
+  const modeLabel = modesFor(set).map((s) => ({ flash: 'Flash', mc: 'MC', write: 'Written' })[s]).join(' + ');
 
   show(
     topbarNav(libraryView, set.name),
@@ -306,19 +306,22 @@ function importView() {
 // --------------------------------------------------------------- settings
 function settingsView(set) {
   keyHandler = null;
-  const options = [['both', 'Multiple choice, then written'], ['mc', 'Multiple choice only'], ['write', 'Written only'],
-    ['all', 'Flashcards, then multiple choice, then written']];
-  const sel = h('select', { onchange: async (e) => {
-    set = { ...set, learnMode: e.target.value };
+  const active = modesFor(set);
+  const boxes = STAGES.map((s) => h('input', { type: 'checkbox', value: s, checked: active.includes(s), onchange: save }));
+  async function save(e) {
+    const stages = boxes.filter((b) => b.checked).map((b) => b.value);
+    if (!stages.length) { e.target.checked = true; return toast('Pick at least one'); }
+    set = { ...set, stages };
     await db.putMany('sets', [set]);
     toast('Saved');
-  } }, ...options.map(([v, l]) => h('option', { value: v, selected: (set.learnMode || 'both') === v }, l)));
+  }
   show(
     topbarNav(() => setView(set), 'Settings'),
     h('main', { class: 'page stack' },
       h('div', { class: 'set-name' }, set.name),
-      h('label', { class: 'field' }, 'Learn mode', sel),
-      h('p', { class: 'muted small-text' }, 'Applies to the next session. A saved session keeps the mode it started with.')));
+      h('div', { class: 'field' }, 'Learn with',
+        ...boxes.map((b) => h('label', { class: 'card check' }, b, STAGE_NAMES[b.value]))),
+      h('p', { class: 'muted small-text' }, 'Cards go through the checked steps in this order. Applies to the next session; a saved session keeps the steps it started with.')));
 }
 
 // ------------------------------------------------------------------- edit
@@ -544,7 +547,7 @@ async function study(set, mode, resume = false, back = libraryView) {
   if (!session) {
     const pool = buildPool(cards, mode, dayNum());
     if (!pool.length) { revoke(imgs); toast('Nothing to study'); return back(); }
-    session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), modes: modesFor(set.learnMode), onCard });
+    session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), modes: modesFor(set), onCard });
   }
   // Save after every step; a finished session has nothing to resume.
   const persist = () => (session.finished

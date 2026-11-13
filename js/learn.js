@@ -14,9 +14,15 @@ export function shuffle(a) {
   return a;
 }
 
-// set.learnMode -> list of question stages. Default: multiple choice, then written.
+// Question stages, always asked in this order. set.stages picks which ones a set uses.
+export const STAGES = ['flash', 'mc', 'write'];
+export const STAGE_NAMES = { flash: 'Flashcards', mc: 'Multiple choice', write: 'Written' };
+// Older sets store a combination name in set.learnMode instead. Default: multiple choice, then written.
 export const LEARN_MODES = { both: ['mc', 'write'], mc: ['mc'], write: ['write'], all: ['flash', 'mc', 'write'] };
-export const modesFor = (learnMode) => LEARN_MODES[learnMode] || LEARN_MODES.both;
+export function modesFor(set) {
+  const picked = Array.isArray(set.stages) ? STAGES.filter((s) => set.stages.includes(s)) : [];
+  return picked.length ? picked : LEARN_MODES[set.learnMode] || LEARN_MODES.both;
+}
 
 export const isDue = (c, today) => c.state === 'review' && c.due <= today;
 

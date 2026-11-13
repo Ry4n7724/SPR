@@ -86,6 +86,8 @@ textarea { resize: vertical; min-height: 120px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .field select, .field input { letter-spacing: 0; text-transform: none; }
 .field select { width: 100%; }
+.check { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--text); }
+.check input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--red); }
 
 /* study */
 /* The progress track is a strip of 6px "LEDs": the mask cuts the bar into dots, the white fill lights them up. */
