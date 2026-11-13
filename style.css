@@ -215,6 +215,11 @@ input.answer { border-width: 1px; }
 .face::after { content: ""; position: absolute; right: 16px; bottom: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
 .face.back { transform: rotateY(180deg); }
 .flip:focus-visible .face { border-color: #fff; }
+/* flashcard stage inside a learn session: star/edit sit above the card, card leaves room for the actions */
+.study-flip { display: flex; flex-direction: column; }
+.flip-tools { display: flex; justify-content: space-between; }
+.flip-tools .star-card, .flip-tools .edit-card { position: static; }
+.study-flip .flip-inner { min-height: 40vh; min-height: 40dvh; }
 .btn.knew { border-color: var(--ok); color: var(--ok); background: transparent; }
 .btn.missed { border-color: var(--bad); color: var(--bad); background: transparent; }
 .btn.knew:hover:not(:disabled) { background: var(--ok-bg); }

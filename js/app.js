@@ -144,7 +144,7 @@ async function setView(set) {
   const back = () => setView(set);
   const tile = (name, title, sub, onclick, disabled = false) => h('button', { class: 'tile', disabled, onclick },
     icon(name), h('span', { class: 'tile-title' }, title), h('span', { class: 'tile-sub' }, sub));
-  const modeLabel = { both: 'MC + written', mc: 'Multiple choice', write: 'Written' }[set.learnMode] || 'MC + written';
+  const modeLabel = { both: 'MC + written', mc: 'Multiple choice', write: 'Written', all: 'Flash + MC + written' }[set.learnMode] || 'MC + written';
 
   show(
     topbarNav(libraryView, set.name),
@@ -306,7 +306,8 @@ function importView() {
 // --------------------------------------------------------------- settings
 function settingsView(set) {
   keyHandler = null;
-  const options = [['both', 'Multiple choice, then written'], ['mc', 'Multiple choice only'], ['write', 'Written only']];
+  const options = [['both', 'Multiple choice, then written'], ['mc', 'Multiple choice only'], ['write', 'Written only'],
+    ['all', 'Flashcards, then multiple choice, then written']];
   const sel = h('select', { onchange: async (e) => {
     set = { ...set, learnMode: e.target.value };
     await db.putMany('sets', [set]);
@@ -419,6 +420,33 @@ async function editView(set) {
 }
 
 // ------------------------------------------------------------- flashcards
+// Two-sided card that turns over on tap. onFlip(flipped) runs after every turn.
+function flipCard(frontLabel, front, backLabel, back, imgs, onFlip = () => {}) {
+  const face = (cls, label, side) => h('div', { class: `card face ${cls}` }, h('div', { class: 'label' }, label), renderSide(side, imgs));
+  let flipped = false;
+  const el = h('div', { class: 'flip', role: 'button', tabindex: 0, 'aria-label': 'Flip card', onclick: (e) => {
+    if (!e.target.closest('img.zoomable')) flip();
+  } }, h('div', { class: 'flip-inner' }, face('front', frontLabel, front), face('back', backLabel, back)));
+  function flip() {
+    flipped = !flipped;
+    el.classList.toggle('flipped', flipped);
+    onFlip(flipped);
+  }
+  return { el, flip };
+}
+
+const knewButtons = (answer) => h('div', { class: 'row' },
+  h('button', { class: 'btn missed', onclick: () => answer(false) }, icon('x'), "Didn't know"),
+  h('button', { class: 'btn knew', onclick: () => answer(true) }, icon('check'), 'Knew it'));
+
+// Space/Enter flips; once the answer buttons are shown, 1/← = didn't know, 2/→ = knew it.
+const flipKeys = (flip, actions, answer) => (e) => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); return; }
+  if (!actions.querySelector('.knew')) return;
+  if (e.key === 'ArrowRight' || e.key === '2') answer(true);
+  else if (e.key === 'ArrowLeft' || e.key === '1') answer(false);
+};
+
 // Flip a card, then say whether you knew it. Doesn't change the review schedule.
 // The position is saved after every answer so reopening continues where you left off.
 async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
@@ -463,33 +491,16 @@ async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
     const it = deck[pos];
     const [frontLabel, backLabel] = it.dir === 'def' ? ['Term', 'Definition'] : ['Definition', 'Term'];
     const [front, backSide] = it.dir === 'def' ? [it.card.term, it.card.def] : [it.card.def, it.card.term];
-    const face = (cls, label, side) => h('div', { class: `card face ${cls}` }, h('div', { class: 'label' }, label), renderSide(side, imgs));
-    let flipped = false;
-    const flipCard = h('div', { class: 'flip', role: 'button', tabindex: 0, 'aria-label': 'Flip card', onclick: (e) => {
-      if (!e.target.closest('img.zoomable')) flip();
-    } }, h('div', { class: 'flip-inner' }, face('front', frontLabel, front), face('back', backLabel, backSide)));
     const actions = h('div', { class: 'actions' });
     const answer = (knew) => { if (!knew) missed.push(it.card); pos++; persist(); showCard(); };
+    const card = flipCard(frontLabel, front, backLabel, backSide, imgs, (flipped) => {
+      if (flipped && !actions.querySelector('.knew')) actions.replaceChildren(knewButtons(answer));
+    });
 
-    function flip() {
-      flipped = !flipped;
-      flipCard.classList.toggle('flipped', flipped);
-      if (flipped && !actions.querySelector('.knew')) {
-        actions.replaceChildren(h('div', { class: 'row' },
-          h('button', { class: 'btn missed', onclick: () => answer(false) }, icon('x'), "Didn't know"),
-          h('button', { class: 'btn knew', onclick: () => answer(true) }, icon('check'), 'Knew it')));
-      }
-    }
-
-    actions.append(h('button', { class: 'btn primary', onclick: flip }, 'Flip'));
-    keyHandler = (e) => {
-      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); return; }
-      if (!actions.querySelector('.knew')) return;
-      if (e.key === 'ArrowRight' || e.key === '2') answer(true);
-      else if (e.key === 'ArrowLeft' || e.key === '1') answer(false);
-    };
+    actions.append(h('button', { class: 'btn primary', onclick: card.flip }, 'Flip'));
+    keyHandler = flipKeys(card.flip, actions, answer);
     show(topbar(),
-      h('main', { class: 'page stack flash-page' }, flipCard, h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
+      h('main', { class: 'page stack flash-page' }, card.el, h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
       actions);
   }
 
@@ -627,14 +638,9 @@ async function study(set, mode, resume = false, back = libraryView) {
       persist();
     };
     starBtn.classList.toggle('on', !!it.card.starred);
-    const promptBox = h('div', { class: 'card prompt' },
-      starBtn,
-      h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, icon('pencil')),
-      h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
+    const editBtn = h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, icon('pencil'));
     const stage = h('div', { class: 'stage' });
     const actions = h('div', { class: 'actions' });
-    const stack = h('main', { class: 'page stack' }, promptBox, stage);
-    show(topbar(), stack, actions);
 
     const proceed = (ok, delay) => {
       session.submit(ok);
@@ -647,6 +653,25 @@ async function study(set, mode, resume = false, back = libraryView) {
       actions.replaceChildren(h('button', { class: 'btn primary', onclick: () => proceed(ok) }, 'Continue'));
       keyHandler = (e) => e.key === 'Enter' && proceed(ok);
     };
+
+    // Flashcard stage: flip, then grade yourself.
+    if (kind === 'flash') {
+      const card = flipCard(label, session.prompt(it), answerLabel, answer, imgs, (flipped) => {
+        if (flipped && !actions.querySelector('.knew')) actions.replaceChildren(knewButtons(proceed));
+      });
+      actions.append(h('button', { class: 'btn primary', onclick: card.flip }, 'Flip'));
+      show(topbar(),
+        h('main', { class: 'page stack study-flip' }, h('div', { class: 'flip-tools' }, starBtn, editBtn), card.el,
+          h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
+        actions);
+      keyHandler = flipKeys(card.flip, actions, proceed);
+      return;
+    }
+
+    const promptBox = h('div', { class: 'card prompt' },
+      starBtn, editBtn, h('div', { class: 'label' }, label), renderSide(session.prompt(it), imgs));
+    const stack = h('main', { class: 'page stack' }, promptBox, stage);
+    show(topbar(), stack, actions);
 
     if (kind === 'mc') {
       stage.append(h('div', { class: 'label' }, `Choose the ${answerLabel.toLowerCase()}`));

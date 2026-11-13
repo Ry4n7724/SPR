@@ -15,7 +15,7 @@ export function shuffle(a) {
 }
 
 // set.learnMode -> list of question stages. Default: multiple choice, then written.
-export const LEARN_MODES = { both: ['mc', 'write'], mc: ['mc'], write: ['write'] };
+export const LEARN_MODES = { both: ['mc', 'write'], mc: ['mc'], write: ['write'], all: ['flash', 'mc', 'write'] };
 export const modesFor = (learnMode) => LEARN_MODES[learnMode] || LEARN_MODES.both;
 
 export const isDue = (c, today) => c.state === 'review' && c.due <= today;
@@ -101,8 +101,9 @@ export class Session {
     return out;
   }
 
-  // 'mc' | 'write' | 'reveal'
+  // 'flash' | 'mc' | 'write' | 'reveal'
   kind(it) {
+    if (this.modes[it.stage] === 'flash') return 'flash';
     const textual = hasText(this.answer(it));
     if (this.modes[it.stage] === 'write' && textual) return 'write';
     if (this.distractors(it, 1).length) return 'mc';
