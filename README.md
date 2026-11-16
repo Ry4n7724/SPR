@@ -8,13 +8,17 @@ A small spaced-repetition app in the style of Quizlet's **Learn** mode. It is a 
 2. In the app tap **+ Import** and either choose the file or paste the text. A preview shows the cards it found. Pick other separators if you used custom ones.
 3. Tap **Learn** on a set. Cards that are due (plus up to 15 new ones) come in rounds of 7: first multiple choice, then typing the answer. A wrong typed answer has to be retyped correctly before you can continue. Misses come back until you get them right. Finished cards are scheduled for later days (1 → 3 → longer, SM-2 style). **Practice all** studies everything without changing the schedule.
 
-Each set on the library screen shows how much of it is learned. Tapping a set opens its page with **Flashcards**, **Learn** (or **Resume**), **Practice all**, **Cards**, **Starred** and **Settings** tiles, plus **Edit** and **Delete** buttons underneath.
+Each set on the library screen shows how much of it is learned. Tapping a set opens its page with **Flashcards**, **Learn** (or **Resume**), **Practice all**, **Test**, **Cards**, **Starred** and **Settings** tiles, plus **Edit** and **Delete** buttons underneath.
 
 "Answer with" on the library screen picks whether you are asked for the definition, the term, or both.
 
 ### Flashcards
 
 Tap **Flashcards** on the set page (or in the card list, where it follows the All/Starred filter). Tap the card to flip it, then choose **Knew it** or **Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change the review schedule.
+
+### Test
+
+Tap **Test** on the set page (or in the card list, where it follows the All/Starred filter). Choose how many questions and which kinds: True/False, Multiple choice and Written. All questions are on one page and nothing is marked until you tap **Submit test**. The results show your score and the correct answer for every miss; tap **I was right** on a written answer that should count. **Retake missed** tests only the cards you got wrong. Tests don't change the review schedule.
 
 ### Images
 

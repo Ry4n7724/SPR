@@ -1,7 +1,8 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
-import { Session, buildPool, isDue, dayNum, modesFor, shuffle, STAGES, STAGE_NAMES } from './learn.js';
+import { Session, buildPool, isDue, dayNum, modesFor, shuffle, STAGES, STAGE_NAMES,
+  buildTest, gradeTest, TEST_TYPES, TEST_TYPE_NAMES } from './learn.js';
 import { icon } from './icons.js';
 
 const app = document.getElementById('app');
@@ -142,7 +143,7 @@ async function setView(set) {
   const flash = store.json(flashKey(set.id, 'all'));
   const st = setStats(cards, dayNum());
   const back = () => setView(set);
-  const tile = (name, title, sub, onclick, disabled = false) => h('button', { class: 'tile', disabled, onclick },
+  const tile = (name, title, sub, onclick, disabled = false, cls = '') => h('button', { class: `tile ${cls}`, disabled, onclick },
     icon(name), h('span', { class: 'tile-title' }, title), h('span', { class: 'tile-sub' }, sub));
   const modeLabel = modesFor(set).map((s) => ({ flash: 'Flash', mc: 'MC', write: 'Written' })[s]).join(' + ');
 
@@ -161,9 +162,10 @@ async function setView(set) {
           ? tile('learn', 'Resume', `${saved.mastered}/${saved.total}`, () => study(set, saved.mode, true, back))
           : tile('learn', 'Learn', st.todo ? `${st.todo} to do` : 'All done today', () => study(set, 'learn', false, back), st.todo === 0),
         tile('play', 'Practice all', 'No scheduling', () => study(set, 'practice', false, back)),
+        tile('flag', 'Test', `${st.total} cards`, () => testSetupView(set, cards, cards, back), st.total === 0),
         tile('book', 'Cards', `${st.total}`, () => cardsView(set)),
         tile('star', 'Starred', `${st.starred}`, () => cardsView(set, 'starred'), st.starred === 0),
-        tile('gear', 'Settings', modeLabel, () => settingsView(set))),
+        tile('gear', 'Settings', modeLabel, () => settingsView(set), false, 'wide')),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', onclick: () => editView(set) }, icon('pencil'), 'Edit'),
         h('button', { class: 'btn small', onclick: async () => {
@@ -193,6 +195,9 @@ async function cardsView(set, initialFilter) {
   const flashBtn = h('button', { class: 'btn', onclick: () => {
     revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set), filter);
   } }, icon('cards'), 'Flashcards');
+  const testBtn = h('button', { class: 'btn', onclick: () => {
+    revoke(imgs); testSetupView(set, cards.filter((c) => filter === 'all' || c.starred), cards, () => cardsView(set));
+  } }, icon('flag'), 'Test');
   const list = h('div', { class: 'stack' });
 
   const starCount = () => cards.filter((c) => c.starred).length;
@@ -205,6 +210,7 @@ async function cardsView(set, initialFilter) {
     learnBtn.textContent = `Learn starred (${m})`;
     learnBtn.disabled = m === 0;
     flashBtn.disabled = filter === 'starred' ? m === 0 : cards.length === 0;
+    testBtn.disabled = flashBtn.disabled;
   }
   function setFilter(f) { filter = f; store.set(key, f); counts(); draw(); }
 
@@ -228,7 +234,7 @@ async function cardsView(set, initialFilter) {
   counts(); draw();
   show(
     topbarNav(back, set.name),
-    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, learnBtn), list));
+    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, testBtn, learnBtn), list));
 }
 
 // ----------------------------------------------------------------- import
@@ -531,6 +537,151 @@ async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
     if (pos < deck.length) toast(`Continuing at ${pos + 1}/${deck.length}`);
     showCard();
   } else start(cards);
+}
+
+// ------------------------------------------------------------------- test
+// Options first: how many questions and which kinds. Remembered for next time.
+function testSetupView(set, cards, allCards, back = () => setView(set)) {
+  keyHandler = null;
+  if (!cards.length) return toast('No cards to test');
+  const saved = store.json('test-opts') || {};
+  const types = Array.isArray(saved.types) && saved.types.some((t) => TEST_TYPES.includes(t)) ? saved.types : TEST_TYPES;
+  const count = h('input', { type: 'number', min: 1, max: cards.length, inputmode: 'numeric',
+    value: Math.min(cards.length, saved.count || 20) });
+  const boxes = TEST_TYPES.map((t) => h('input', { type: 'checkbox', value: t, checked: types.includes(t), onchange: (e) => {
+    if (!boxes.some((b) => b.checked)) { e.target.checked = true; toast('Pick at least one'); }
+  } }));
+  const start = () => {
+    const n = Math.max(1, Math.min(cards.length, parseInt(count.value, 10) || cards.length));
+    const opts = { count: n, types: boxes.filter((b) => b.checked).map((b) => b.value) };
+    store.set('test-opts', JSON.stringify(opts));
+    testView(set, cards, allCards, opts, back);
+  };
+  keyHandler = (e) => e.key === 'Enter' && start();
+  show(
+    topbarNav(back, 'Test'),
+    h('main', { class: 'page stack' },
+      h('div', { class: 'set-name' }, set.name),
+      h('label', { class: 'field' }, `Questions (max ${cards.length})`, count),
+      h('div', { class: 'field' }, 'Question types',
+        ...boxes.map((b) => h('label', { class: 'card check' }, b, TEST_TYPE_NAMES[b.value]))),
+      h('p', { class: 'muted small-text' }, 'Each card is asked once and graded at the end. Tests don\'t change the review schedule.')),
+    h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: start }, 'Start test')));
+}
+
+// All questions on one page; nothing is marked until the test is submitted.
+async function testView(set, cards, allCards, opts, back) {
+  keyHandler = null;
+  const qs = buildTest(cards, allCards, { ...opts, dir: store.get('dir', 'def') });
+  if (!qs.length) return toast('Not enough cards for these question types');
+  const imgs = await imageMap(set.id);
+  const answers = new Array(qs.length).fill(null);
+  const answered = () => answers.filter((a) => a != null && a !== '').length;
+  const exit = () => { keyHandler = null; revoke(imgs); back(); };
+  const close = () => { if (!answered() || confirm('Leave the test? Your answers will be lost.')) exit(); };
+  const { header, update } = progressHeader(close);
+  const refresh = () => update(Math.round((answered() / qs.length) * 100), `${answered()}/${qs.length}`);
+  const labels = (q) => (q.dir === 'def' ? ['Term', 'Definition'] : ['Definition', 'Term']);
+
+  const blocks = qs.map((q, i) => {
+    const [promptLabel, answerLabel] = labels(q);
+    const box = h('div', { class: 'card stack test-q' },
+      h('div', { class: 'q-num' }, `${i + 1} of ${qs.length} · ${TEST_TYPE_NAMES[q.type]}`),
+      h('div', { class: 'label' }, promptLabel), renderSide(q.prompt, imgs));
+    const choose = (buttons, values) => buttons.forEach((b, j) => b.addEventListener('click', () => {
+      answers[i] = values[j];
+      buttons.forEach((x, k) => x.classList.toggle('sel', k === j));
+      refresh();
+    }));
+    if (q.type === 'tf') {
+      box.append(h('hr'), h('div', { class: 'label' }, answerLabel), renderSide(q.shown, imgs));
+      const buttons = [h('button', { class: 'opt' }, 'True'), h('button', { class: 'opt' }, 'False')];
+      choose(buttons, [true, false]);
+      box.append(h('div', { class: 'tf' }, ...buttons));
+    } else if (q.type === 'mc') {
+      const buttons = q.options.map((o, j) => h('button', { class: 'opt' }, h('span', { class: 'num' }, j + 1), renderSide(o, imgs)));
+      choose(buttons, q.options);
+      box.append(h('div', { class: 'label' }, `Choose the ${answerLabel.toLowerCase()}`), h('div', { class: 'opts' }, ...buttons));
+    } else {
+      const input = h('input', { type: 'text', class: 'answer', placeholder: `Type the ${answerLabel.toLowerCase()}`,
+        autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next',
+        oninput: (e) => { answers[i] = e.target.value; refresh(); } });
+      // Enter jumps to the next written answer instead of submitting.
+      input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const all = [...document.querySelectorAll('.test-q input.answer')];
+        const next = all[all.indexOf(input) + 1];
+        if (next) next.focus(); else input.blur();
+      });
+      box.append(h('div', { class: 'label' }, answerLabel), input);
+    }
+    return box;
+  });
+
+  const submit = () => {
+    const left = qs.length - answered();
+    if (left && !confirm(`${left} question${left === 1 ? '' : 's'} unanswered. Submit anyway?`)) return;
+    results();
+  };
+
+  function results() {
+    keyHandler = null;
+    const ok = qs.map((q, i) => gradeTest(q, answers[i]));
+    const score = h('div', { class: 'big-num' });
+    const pct = h('p', { class: 'muted' });
+    const retake = h('button', { class: 'btn primary' });
+    const paint = () => {
+      const n = ok.filter(Boolean).length;
+      score.textContent = `${n}/${qs.length}`;
+      pct.textContent = `${Math.round((n / qs.length) * 100)}% correct`;
+      const missed = qs.length - n;
+      retake.textContent = `Retake ${missed} missed`;
+      retake.hidden = missed === 0;
+    };
+    retake.onclick = () => {
+      const missed = qs.filter((_, i) => !ok[i]).map((q) => q.card);
+      revoke(imgs);
+      testView(set, missed, allCards, { ...opts, count: missed.length }, back);
+    };
+    const yours = (q, a) => {
+      if (a == null || a === '') return h('div', { class: 'txt muted' }, 'No answer');
+      if (q.type === 'tf') return h('div', { class: 'txt' }, a ? 'True' : 'False');
+      if (q.type === 'mc') return renderSide(a, imgs);
+      return h('div', { class: 'txt' }, a);
+    };
+    const rows = qs.map((q, i) => {
+      const [promptLabel, answerLabel] = labels(q);
+      const row = h('div', { class: 'card stack test-q' });
+      const draw = () => {
+        const a = answers[i];
+        row.replaceChildren(
+          h('div', { class: 'row' },
+            h('div', { class: 'q-num grow' }, `${i + 1} · ${TEST_TYPE_NAMES[q.type]}`),
+            h('span', { class: ok[i] ? 'ok-pill' : 'bad-pill' }, ok[i] ? icon('check') : icon('x'))),
+          h('div', { class: 'label' }, promptLabel), renderSide(q.prompt, imgs),
+          q.type === 'tf' ? h('div', {}, h('div', { class: 'label' }, `Shown ${answerLabel.toLowerCase()}`), renderSide(q.shown, imgs)) : null,
+          h('div', { class: `feedback${ok[i] ? ' good' : ''}` }, h('div', { class: 'label' }, 'Your answer'), yours(q, a)),
+          ok[i] ? null : h('div', { class: 'feedback good' }, h('div', { class: 'label' }, `Correct ${answerLabel.toLowerCase()}`),
+            q.type === 'tf' ? h('div', { class: 'txt' }, q.truth ? 'True' : `False — ${answerLabel.toLowerCase()} is:`) : null,
+            q.type === 'tf' && q.truth ? null : renderSide(q.answer, imgs)),
+          !ok[i] && q.type === 'write' && a ? h('button', { class: 'btn small', onclick: () => { ok[i] = true; draw(); paint(); } }, 'I was right') : null);
+      };
+      draw();
+      return row;
+    });
+    paint();
+    show(topbarNav(exit, 'Test results', 'close'),
+      h('main', { class: 'page stack' },
+        h('div', { class: 'center stack' }, score, pct), ...rows),
+      h('div', { class: 'actions' }, retake,
+        h('button', { class: 'btn', onclick: () => { revoke(imgs); testView(set, cards, allCards, opts, back); } }, 'New test'),
+        h('button', { class: 'btn ghost', onclick: exit }, 'Done')));
+  }
+
+  refresh();
+  show(header, h('main', { class: 'page stack' }, ...blocks),
+    h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: submit }, 'Submit test')));
 }
 
 // ------------------------------------------------------------------ study

@@ -1,5 +1,5 @@
 // Learn session (multiple choice -> written) + simplified SM-2 scheduling.
-import { sideText, hasText } from './content.js';
+import { sideText, hasText, norm } from './content.js';
 
 export const NEW_PER_SESSION = 15;
 
@@ -23,6 +23,28 @@ export function modesFor(set) {
   const picked = Array.isArray(set.stages) ? STAGES.filter((s) => set.stages.includes(s)) : [];
   return picked.length ? picked : LEARN_MODES[set.learnMode] || LEARN_MODES.both;
 }
+
+// 'def' direction: prompt = term, answer = definition.
+export const promptOf = (card, dir) => (dir === 'def' ? card.term : card.def);
+export const answerOf = (card, dir) => (dir === 'def' ? card.def : card.term);
+export const pickDir = (dir) => (dir === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : dir);
+
+// Up to n distinct wrong answers taken from other cards of the set.
+export function pickDistractors(card, dir, allCards, n = 3) {
+  const seen = new Set([answerOf(card, dir).trim()]);
+  const out = [];
+  for (const c of shuffle(allCards)) {
+    if (c.id === card.id) continue;
+    const a = answerOf(c, dir).trim();
+    if (seen.has(a)) continue;
+    seen.add(a); out.push(a);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
+// Typed answer matches, ignoring case, accents, punctuation and extra spaces.
+export const matches = (typed, answer) => norm(typed) !== '' && norm(typed) === norm(sideText(answer));
 
 export const isDue = (c, today) => c.state === 'review' && c.due <= today;
 
@@ -78,7 +100,7 @@ export class Session {
     this.items = this.pending.splice(0, this.size).map((card) => ({
       card, misses: 0, done: false,
       stage: this.mode === 'learn' && card.state === 'review' ? this.modes.length - 1 : 0,
-      dir: this.dir === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : this.dir,
+      dir: pickDir(this.dir),
     }));
     this.queue = shuffle(this.items);
     return true;
@@ -89,23 +111,9 @@ export class Session {
   get roundDone() { return this.queue.length === 0; }
   get finished() { return this.roundDone && this.pending.length === 0; }
 
-  // 'def' direction: prompt = term, answer = definition.
-  prompt(it) { return it.dir === 'def' ? it.card.term : it.card.def; }
-  answer(it) { return it.dir === 'def' ? it.card.def : it.card.term; }
-
-  distractors(it, n = 3) {
-    const correct = this.answer(it).trim();
-    const seen = new Set([correct]);
-    const out = [];
-    for (const c of shuffle(this.allCards)) {
-      if (c.id === it.card.id) continue;
-      const a = (it.dir === 'def' ? c.def : c.term).trim();
-      if (seen.has(a)) continue;
-      seen.add(a); out.push(a);
-      if (out.length >= n) break;
-    }
-    return out;
-  }
+  prompt(it) { return promptOf(it.card, it.dir); }
+  answer(it) { return answerOf(it.card, it.dir); }
+  distractors(it, n = 3) { return pickDistractors(it.card, it.dir, this.allCards, n); }
 
   // 'flash' | 'mc' | 'write' | 'reveal'
   kind(it) {
@@ -120,11 +128,7 @@ export class Session {
     return shuffle([this.answer(it).trim(), ...this.distractors(it)]);
   }
 
-  check(it, typed) {
-    const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-      .replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
-    return norm(typed) === norm(sideText(this.answer(it))) && norm(typed) !== '';
-  }
+  check(it, typed) { return matches(typed, this.answer(it)); }
 
   // Record a result for the current item.
   submit(ok) {
@@ -175,4 +179,41 @@ export class Session {
       perfect: data.perfect, steps: data.steps, stepsTotal: data.stepsTotal });
     return s.finished ? null : s;
   }
+}
+
+// ------------------------------------------------------------------ test
+// One-shot test: each card is asked once, graded at the end, schedule untouched.
+export const TEST_TYPES = ['tf', 'mc', 'write'];
+export const TEST_TYPE_NAMES = { tf: 'True / False', mc: 'Multiple choice', write: 'Written' };
+
+// cards: cards to ask about. allCards: whole set (for distractors).
+// Types are spread evenly; a type a card can't support falls back to another one.
+export function buildTest(cards, allCards, { count = cards.length, types = TEST_TYPES, dir = 'def' } = {}) {
+  const picked = TEST_TYPES.filter((t) => types.includes(t));
+  const order = shuffle(picked.length ? picked : TEST_TYPES);
+  const out = [];
+  for (const card of shuffle(cards)) {
+    if (out.length >= count) break;
+    const d = pickDir(dir);
+    const answer = answerOf(card, d);
+    const textual = hasText(answer);
+    const wrong = pickDistractors(card, d, allCards, 3);
+    const can = (t) => (t === 'write' ? textual : wrong.length > 0);
+    const want = order[out.length % order.length];
+    const type = [want, ...order, ...TEST_TYPES].find(can);
+    if (!type) continue;
+    const q = { card, dir: d, type, prompt: promptOf(card, d), answer };
+    if (type === 'mc') q.options = shuffle([answer.trim(), ...wrong]);
+    if (type === 'tf') { q.truth = Math.random() < 0.5; q.shown = q.truth ? answer.trim() : wrong[0]; }
+    out.push(q);
+  }
+  return out;
+}
+
+// response: tf -> boolean, mc -> option string, write -> typed text. null/undefined = unanswered.
+export function gradeTest(q, response) {
+  if (response == null) return false;
+  if (q.type === 'tf') return response === q.truth;
+  if (q.type === 'mc') return response === q.answer.trim();
+  return matches(response, q.answer);
 }

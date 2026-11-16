@@ -119,6 +119,11 @@ textarea { resize: vertical; min-height: 120px; }
 .opt.bad, input.answer.bad { border-color: var(--bad); background: var(--bad-bg); }
 .opt.ok .num { border-color: var(--ok); color: var(--ok); }
 .opt.bad .num { border-color: var(--bad); color: var(--bad); }
+.opt.sel { border-color: var(--text); background: var(--card-2); }
+.opt.sel .num { border-color: var(--text); }
+.tf { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tf .opt { justify-content: center; }
+.q-num { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
 .opt:disabled { color: var(--text); cursor: default; }
 input.answer { border-width: 1px; }
 .feedback { padding: 12px 14px; border-radius: var(--r-input); background: var(--bad-bg); border: 1px solid var(--bad); }
@@ -201,6 +206,7 @@ input.answer { border-width: 1px; }
 .tile-title { font-size: 15px; font-weight: 500; }
 .tile-sub { color: var(--muted); font-size: 12px; }
 .tile:hover:not(:disabled), .tile:active:not(:disabled) { background: var(--card-2); }
+.tile.wide { grid-column: 1 / -1; }
 .tile:disabled { opacity: .45; cursor: default; }
 
 /* flashcards */
