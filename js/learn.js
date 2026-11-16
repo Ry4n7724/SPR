@@ -1,9 +1,5 @@
-// Learn session (multiple choice -> written) + simplified SM-2 scheduling.
+// Learn session: every card goes through the chosen steps (flashcard -> multiple choice -> written) until mastered.
 import { sideText, hasText, norm } from './content.js';
-
-export const NEW_PER_SESSION = 15;
-
-export const dayNum = (d = new Date()) => Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 864e5);
 
 export function shuffle(a) {
   a = [...a];
@@ -46,51 +42,22 @@ export function pickDistractors(card, dir, allCards, n = 3) {
 // Typed answer matches, ignoring case, accents, punctuation and extra spaces.
 export const matches = (typed, answer) => norm(typed) !== '' && norm(typed) === norm(sideText(answer));
 
-export const isDue = (c, today) => c.state === 'review' && c.due <= today;
-
-// Update a card's schedule after a session. misses = wrong answers this session.
-export function schedule(card, misses, today) {
-  const c = { ...card };
-  if (misses === 0) {
-    c.reps += 1;
-    c.interval = c.reps === 1 ? 1 : c.reps === 2 ? 3 : Math.round(Math.max(c.interval, 1) * c.ease);
-    c.ease = Math.min(3, c.ease + 0.05);
-  } else if (misses === 1) {
-    c.reps += 1;
-    c.interval = Math.max(1, Math.round(c.interval * 1.2));
-    c.ease = Math.max(1.3, c.ease - 0.05);
-  } else {
-    c.reps = 0;
-    c.lapses += 1;
-    c.interval = 1;
-    c.ease = Math.max(1.3, c.ease - 0.2);
-  }
-  c.state = 'review';
-  c.due = today + c.interval;
-  return c;
-}
-
-// mode 'learn': due cards first, then a few new ones. mode 'practice': everything.
-export function buildPool(cards, mode, today) {
-  if (mode === 'practice') return shuffle(cards);
-  if (mode === 'starred') return shuffle(cards.filter((c) => c.starred));
-  const due = cards.filter((c) => isDue(c, today)).sort((a, b) => a.due - b.due);
-  const fresh = shuffle(cards.filter((c) => c.state === 'new')).slice(0, NEW_PER_SESSION);
-  return [...shuffle(due), ...fresh];
+// Learn goes through every card of the set (or only the starred ones), shuffled.
+export function learnPool(cards, starredOnly = false) {
+  return shuffle(starredOnly ? cards.filter((c) => c.starred) : cards);
 }
 
 export class Session {
   // allCards: whole set (used for distractors). pool: cards to study.
-  constructor(pool, allCards, { mode = 'learn', dir = 'def', size = 7, modes = LEARN_MODES.both, onCard = () => {} } = {}) {
+  constructor(pool, allCards, { dir = 'def', size = 7, modes = LEARN_MODES.both } = {}) {
     this.pending = [...pool];
     this.allCards = allCards;
-    this.mode = mode; this.dir = dir; this.size = size; this.onCard = onCard;
+    this.mode = 'learn'; this.dir = dir; this.size = size;
     this.modes = modes;
     this.total = pool.length; this.mastered = 0; this.perfect = 0;
     this.steps = 0;
-    this.stepsTotal = pool.reduce((n, c) => n + (mode === 'learn' && c.state === 'review' ? 1 : modes.length), 0);
+    this.stepsTotal = pool.length * modes.length;
     this.items = []; this.queue = [];
-    this.today = dayNum();
     this.round = 0;
   }
 
@@ -99,7 +66,7 @@ export class Session {
     this.round++;
     this.items = this.pending.splice(0, this.size).map((card) => ({
       card, misses: 0, done: false,
-      stage: this.mode === 'learn' && card.state === 'review' ? this.modes.length - 1 : 0,
+      stage: 0,
       dir: pickDir(this.dir),
     }));
     this.queue = shuffle(this.items);
@@ -140,10 +107,6 @@ export class Session {
         it.done = true;
         this.mastered++;
         if (it.misses === 0) this.perfect++;
-        if (this.mode === 'learn') {
-          it.card = schedule(it.card, it.misses, this.today);
-          this.onCard(it.card);
-        }
       } else {
         this.queue.splice(Math.min(this.queue.length, 3), 0, it);
       }
@@ -152,6 +115,30 @@ export class Session {
       this.queue.splice(Math.min(this.queue.length, 2), 0, it);
     }
     return it;
+  }
+
+  // Switch a running session to other steps. Items keep the steps they already passed (in STAGES order):
+  // one that hasn't passed any starts at the first new step, others continue after their last passed one.
+  // Items with nothing left count as mastered. Returns true if anything changed.
+  setModes(modes) {
+    const same = modes.length === this.modes.length && modes.every((m, i) => m === this.modes[i]);
+    if (same || !modes.length) return false;
+    const pos = (m) => STAGES.indexOf(m);
+    for (const it of this.items) {
+      if (it.done) continue;
+      const last = it.stage > 0 ? pos(this.modes[it.stage - 1]) : -1;
+      it.stage = modes.filter((m) => pos(m) <= last).length;
+      if (it.stage >= modes.length) {
+        it.done = true;
+        this.mastered++;
+        if (it.misses === 0) this.perfect++;
+        this.queue = this.queue.filter((q) => q !== it);
+      }
+    }
+    this.modes = modes;
+    this.stepsTotal = this.total * modes.length;
+    this.steps = this.mastered * modes.length + this.items.reduce((n, it) => n + (it.done ? 0 : it.stage), 0);
+    return true;
   }
 
   // Plain-data snapshot so a session can be saved and continued later.
@@ -167,10 +154,12 @@ export class Session {
     };
   }
 
-  // Rebuild a saved session. Cards that no longer exist are dropped. Returns null if nothing is left.
-  static restore(data, allCards, { onCard } = {}) {
+  // Rebuild a saved session. Cards that no longer exist are dropped. Returns null if nothing is left
+  // (or the record only marks a finished session).
+  static restore(data, allCards) {
+    if (!data || data.done || !Array.isArray(data.pending)) return null;
     const byId = new Map(allCards.map((c) => [c.id, c]));
-    const s = new Session([], allCards, { mode: data.mode, dir: data.dir, size: data.size, modes: data.modes, onCard });
+    const s = new Session([], allCards, { dir: data.dir, size: data.size, modes: data.modes });
     s.pending = data.pending.map((id) => byId.get(id)).filter(Boolean);
     s.items = data.items.filter((i) => byId.has(i.id)).map((i) => ({ ...i, card: byId.get(i.id) }));
     const live = new Map(s.items.map((it) => [it.card.id, it]));
@@ -182,7 +171,7 @@ export class Session {
 }
 
 // ------------------------------------------------------------------ test
-// One-shot test: each card is asked once, graded at the end, schedule untouched.
+// One-shot test: each card is asked once, graded at the end. Learn progress is untouched.
 export const TEST_TYPES = ['tf', 'mc', 'write'];
 export const TEST_TYPE_NAMES = { tf: 'True / False', mc: 'Multiple choice', write: 'Written' };
 

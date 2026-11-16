@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { h, renderSide, sideText, hasText } from './content.js';
 import { parseCards, readFiles, saveSet, exportBackup, restoreBackup, newCard, normalizeSide, imagesUsed } from './import.js';
-import { Session, buildPool, isDue, dayNum, modesFor, shuffle, STAGES, STAGE_NAMES,
+import { Session, learnPool, modesFor, shuffle, STAGES, STAGE_NAMES,
   buildTest, gradeTest, TEST_TYPES, TEST_TYPE_NAMES } from './learn.js';
 import { icon } from './icons.js';
 
@@ -13,8 +13,23 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
   json(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
 };
-// Flashcard position per set and scope ('all' or 'starred').
-const flashKey = (setId, scope) => `flash-${setId}-${scope}`;
+// Saved flashcard deck and position, one per set.
+const flashKey = (setId) => `flash-${setId}`;
+// Before per-set settings there was one global answer direction; it is the default for older sets.
+const DIRS = [['def', 'Definition'], ['term', 'Term'], ['mixed', 'Both']];
+const learnDirOf = (set) => set.learnDir || store.get('dir', 'def');
+const FLASH_DEFAULTS = { shuffle: true, track: true, starred: false };
+// front = what the card shows first: 'term', 'def' or 'mixed'.
+const flashOpts = (set) => {
+  const old = store.get('dir', 'def');
+  return { ...FLASH_DEFAULTS, front: old === 'def' ? 'term' : old === 'term' ? 'def' : 'mixed', ...(set.flash || {}) };
+};
+// Only Learn keeps a saved session; older versions also saved practice ones, which are dropped.
+async function learnSession(setId) {
+  const saved = await db.getSession(setId);
+  if (saved && saved.mode !== 'learn') { await db.deleteSession(setId); return null; }
+  return saved;
+}
 let keyHandler = null;
 document.addEventListener('keydown', (e) => keyHandler && keyHandler(e));
 
@@ -45,28 +60,47 @@ const topbarNav = (onBack, title, iconName = 'back') => h('header', { class: 'to
   h('button', { class: 'icon', 'aria-label': iconName === 'back' ? 'Back' : 'Close', onclick: onBack }, icon(iconName)),
   h('h1', {}, title), h('span'));
 
-// Close button + progress bar + counter. Built once and updated in place so the width transition animates.
-function progressHeader(onExit) {
+// Close button + progress bar + counter (+ optional options gear). Built once and updated in place so the width transition animates.
+function progressHeader(onExit, onSettings) {
   const bar = h('div', { style: 'width:0%' });
   const track = h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar);
   const count = h('span', { class: 'muted count' });
   const header = h('header', { class: 'topbar' },
-    h('button', { class: 'icon', 'aria-label': 'Close', onclick: onExit }, icon('close')), track, count);
+    h('button', { class: 'icon', 'aria-label': 'Close', onclick: onExit }, icon('close')), track, count,
+    onSettings ? h('button', { class: 'icon', 'aria-label': 'Options', onclick: onSettings }, icon('gear')) : null);
   return {
     header,
     update(pct, text) { bar.style.width = `${pct}%`; track.setAttribute('aria-valuenow', pct); count.textContent = text; },
   };
 }
 
-function setStats(cards, today) {
-  const total = cards.length;
-  const learned = cards.filter((c) => c.state === 'review').length;
-  const due = cards.filter((c) => isDue(c, today)).length;
-  const fresh = cards.filter((c) => c.state === 'new').length;
-  const starred = cards.filter((c) => c.starred).length;
-  return { total, learned, due, fresh, starred, todo: due + Math.min(fresh, 15), pct: total ? Math.round((learned / total) * 100) : 0 };
+// Bottom sheet for a mode's options. Keys go to the sheet while it is open; onClose runs after it closes.
+function optionsSheet(title, body, onClose = () => {}) {
+  const prevKeys = keyHandler;
+  const close = () => { box.remove(); keyHandler = prevKeys; onClose(); };
+  keyHandler = (e) => e.key === 'Escape' && close();
+  const box = h('div', { class: 'modal', onclick: (e) => { if (e.target === box) close(); } },
+    h('div', { class: 'card stack modal-body' }, h('div', { class: 'handle' }), h('h2', {}, title), ...body,
+      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+  document.body.append(box);
+  return { close, remove: () => box.remove() };
 }
-const statsLine = (st) => `${st.total} cards · ${st.due} due · ${st.fresh} new${st.starred ? ` · ${st.starred} starred` : ''}`;
+
+// Select for the answer direction.
+const dirSelect = (value, onchange) => h('select', { onchange: (e) => onchange(e.target.value) },
+  ...DIRS.map(([v, l]) => h('option', { value: v, selected: value === v }, l)));
+
+async function saveSetRecord(set) { await db.putMany('sets', [set]); return set; }
+
+// Set overview from its cards and its saved Learn session. state: 'none', 'active' or 'done'.
+function setStats(cards, saved) {
+  const total = cards.length;
+  const starred = cards.filter((c) => c.starred).length;
+  const state = !saved ? 'none' : saved.done ? 'done' : 'active';
+  const pct = state === 'done' ? 100 : state === 'active' && saved.stepsTotal ? Math.round((saved.steps / saved.stepsTotal) * 100) : 0;
+  return { total, starred, state, pct, mastered: saved ? saved.mastered : 0, of: saved ? saved.total : 0 };
+}
+const statsLine = (st) => `${st.total} cards${st.state === 'none' ? '' : ` · ${st.mastered}/${st.of} mastered`}${st.starred ? ` · ${st.starred} starred` : ''}`;
 const progressBar = (pct) => h('div', {
   class: 'progress', role: 'progressbar', 'aria-label': 'Learned', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct,
 }, h('div', { style: `width:${pct}%` }));
@@ -75,21 +109,15 @@ const progressBar = (pct) => h('div', {
 async function libraryView() {
   keyHandler = null;
   const sets = (await db.getSets()).sort((a, b) => b.created - a.created);
-  const today = dayNum();
-  const dirSel = h('select', { onchange: (e) => store.set('dir', e.target.value) },
-    ...[['def', 'Definition'], ['term', 'Term'], ['mixed', 'Both']].map(([v, l]) =>
-      h('option', { value: v, selected: store.get('dir', 'def') === v }, l)));
 
   const list = h('div', { class: 'list' });
   for (const s of sets) {
     const cards = await db.getCards(s.id);
-    const st = setStats(cards, today);
-    const saved = await db.getSession(s.id);
-    const primary = saved
-      ? h('button', { class: 'btn primary', onclick: () => study(s, saved.mode, true) },
-        `Resume ${saved.mode === 'learn' ? 'learn' : saved.mode === 'starred' ? 'starred' : 'practice'} (${saved.mastered}/${saved.total})`)
-      : h('button', { class: 'btn primary', disabled: st.todo === 0, onclick: () => study(s, 'learn') },
-        st.todo ? `Learn (${st.todo})` : 'All done today');
+    const saved = await learnSession(s.id);
+    const st = setStats(cards, saved);
+    const primary = st.state === 'active'
+      ? h('button', { class: 'btn primary', onclick: () => study(s, true) }, `Continue learn (${st.mastered}/${st.of})`)
+      : h('button', { class: 'btn primary', disabled: st.total === 0, onclick: () => study(s) }, st.state === 'done' ? 'Learn again' : 'Learn');
     // The whole card opens the set page; the button inside must not.
     primary.addEventListener('click', (e) => e.stopPropagation());
     list.append(h('div', { class: 'card set clickable', onclick: () => setView(s) },
@@ -116,7 +144,6 @@ async function libraryView() {
     h('header', { class: 'topbar' }, h('h1', {}, h('span', { class: 'dot' }), ' Spaced Cards'),
       h('button', { class: 'btn primary small', onclick: importView }, icon('plus'), 'Import')),
     h('main', { class: 'page' },
-      sets.length ? h('label', { class: 'inline' }, 'Answer with ', dirSel) : null,
       sets.length ? list : h('div', { class: 'empty' },
         h('p', {}, h('span', { class: 'dot' }), ' No sets yet.'),
         h('p', { class: 'muted' }, 'Import a Quizlet export (text file) or a .zip with images. Tap Import to start.'),
@@ -139,13 +166,12 @@ async function setView(set) {
   // Re-read so a rename or settings change shows up without passing objects around.
   set = (await db.getSets()).find((x) => x.id === set.id) || set;
   const cards = await db.getCards(set.id);
-  const saved = await db.getSession(set.id);
-  const flash = store.json(flashKey(set.id, 'all'));
-  const st = setStats(cards, dayNum());
+  const saved = await learnSession(set.id);
+  const flash = store.json(flashKey(set.id));
+  const st = setStats(cards, saved);
   const back = () => setView(set);
   const tile = (name, title, sub, onclick, disabled = false, cls = '') => h('button', { class: `tile ${cls}`, disabled, onclick },
     icon(name), h('span', { class: 'tile-title' }, title), h('span', { class: 'tile-sub' }, sub));
-  const modeLabel = modesFor(set).map((s) => ({ flash: 'Flash', mc: 'MC', write: 'Written' })[s]).join(' + ');
 
   show(
     topbarNav(libraryView, set.name),
@@ -156,27 +182,19 @@ async function setView(set) {
         progressBar(st.pct),
         h('div', { class: 'muted' }, statsLine(st))),
       h('div', { class: 'tiles' },
+        st.state === 'active'
+          ? tile('learn', 'Continue learning', `${st.mastered}/${st.of} mastered`, () => study(set, true, back), false, 'wide')
+          : tile('learn', 'Learn', st.state === 'done' ? 'All mastered · learn again' : `${st.total} cards`, () => study(set, false, back), st.total === 0, 'wide'),
         tile('cards', 'Flashcards', flash ? `Resume ${Math.min(flash.pos, flash.deck.length)}/${flash.deck.length}` : `${st.total} cards`,
-          () => flashcardsView(set, cards, back, 'all')),
-        saved
-          ? tile('learn', 'Resume', `${saved.mastered}/${saved.total}`, () => study(set, saved.mode, true, back))
-          : tile('learn', 'Learn', st.todo ? `${st.todo} to do` : 'All done today', () => study(set, 'learn', false, back), st.todo === 0),
-        tile('play', 'Practice all', 'No scheduling', () => study(set, 'practice', false, back)),
+          () => flashcardsView(set, cards, back)),
         tile('flag', 'Test', `${st.total} cards`, () => testSetupView(set, cards, cards, back), st.total === 0),
         tile('book', 'Cards', `${st.total}`, () => cardsView(set)),
-        tile('star', 'Starred', `${st.starred}`, () => cardsView(set, 'starred'), st.starred === 0),
-        tile('gear', 'Settings', modeLabel, () => settingsView(set), false, 'wide')),
+        tile('star', 'Starred', `${st.starred}`, () => cardsView(set, 'starred'), st.starred === 0)),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', onclick: () => editView(set) }, icon('pencil'), 'Edit'),
         h('button', { class: 'btn small', onclick: async () => {
-          if (confirm(`Delete "${set.name}" and its progress?`)) { await db.deleteSet(set.id); libraryView(); }
-        } }, icon('trash'), 'Delete'),
-        saved || flash ? h('button', { class: 'btn small', onclick: async () => {
-          if (!confirm(`Discard the saved progress for "${set.name}"?`)) return;
-          await db.deleteSession(set.id);
-          store.del(flashKey(set.id, 'all')); store.del(flashKey(set.id, 'starred'));
-          setView(set);
-        } }, icon('refresh'), 'Start over') : null)));
+          if (confirm(`Delete "${set.name}" and its progress?`)) { await db.deleteSet(set.id); store.del(flashKey(set.id)); libraryView(); }
+        } }, icon('trash'), 'Delete'))));
 }
 
 // ------------------------------------------------------------------ cards
@@ -191,13 +209,16 @@ async function cardsView(set, initialFilter) {
 
   const allBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('all') });
   const starBtn = h('button', { class: 'seg-btn', onclick: () => setFilter('starred') });
-  const learnBtn = h('button', { class: 'btn primary', onclick: () => { revoke(imgs); study(set, 'starred', false, () => cardsView(set)); } });
   const flashBtn = h('button', { class: 'btn', onclick: () => {
-    revoke(imgs); flashcardsView(set, cards.filter((c) => filter === 'all' || c.starred), () => cardsView(set), filter);
+    revoke(imgs); flashcardsView(set, cards, () => cardsView(set));
   } }, icon('cards'), 'Flashcards');
-  const testBtn = h('button', { class: 'btn', onclick: () => {
-    revoke(imgs); testSetupView(set, cards.filter((c) => filter === 'all' || c.starred), cards, () => cardsView(set));
-  } }, icon('flag'), 'Test');
+  // Starts a new Learn session with the cards shown (all or only the starred ones).
+  // There is one saved Learn session per set, so an unfinished one gets replaced (after asking).
+  const active = Session.restore(await learnSession(set.id), cards) !== null;
+  const learnBtn = h('button', { class: 'btn', onclick: () => {
+    if (active && !confirm('Start a new Learn session? Your current Learn progress will be replaced.')) return;
+    revoke(imgs); study(set, false, () => cardsView(set), { starred: filter === 'starred' });
+  } }, icon('learn'), 'Learn');
   const list = h('div', { class: 'stack' });
 
   const starCount = () => cards.filter((c) => c.starred).length;
@@ -207,10 +228,8 @@ async function cardsView(set, initialFilter) {
     starBtn.textContent = `Starred (${m})`;
     allBtn.classList.toggle('on', filter === 'all');
     starBtn.classList.toggle('on', filter === 'starred');
-    learnBtn.textContent = `Learn starred (${m})`;
-    learnBtn.disabled = m === 0;
-    flashBtn.disabled = filter === 'starred' ? m === 0 : cards.length === 0;
-    testBtn.disabled = flashBtn.disabled;
+    flashBtn.disabled = cards.length === 0;
+    learnBtn.disabled = filter === 'starred' ? m === 0 : cards.length === 0;
   }
   function setFilter(f) { filter = f; store.set(key, f); counts(); draw(); }
 
@@ -234,7 +253,7 @@ async function cardsView(set, initialFilter) {
   counts(); draw();
   show(
     topbarNav(back, set.name),
-    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, testBtn, learnBtn), list));
+    h('main', { class: 'page stack' }, h('div', { class: 'seg' }, allBtn, starBtn), h('div', { class: 'row' }, flashBtn, learnBtn), list));
 }
 
 // ----------------------------------------------------------------- import
@@ -307,27 +326,6 @@ function importView() {
       h('button', { class: 'btn primary', onclick: () => fileIn.click() }, icon('folder'), 'Choose file(s)'),
       h('p', { class: 'muted small-text' }, 'Pick a .txt/.csv export, a .zip (text file + images), or a text file together with image files.'),
       fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
-}
-
-// --------------------------------------------------------------- settings
-function settingsView(set) {
-  keyHandler = null;
-  const active = modesFor(set);
-  const boxes = STAGES.map((s) => h('input', { type: 'checkbox', value: s, checked: active.includes(s), onchange: save }));
-  async function save(e) {
-    const stages = boxes.filter((b) => b.checked).map((b) => b.value);
-    if (!stages.length) { e.target.checked = true; return toast('Pick at least one'); }
-    set = { ...set, stages };
-    await db.putMany('sets', [set]);
-    toast('Saved');
-  }
-  show(
-    topbarNav(() => setView(set), 'Settings'),
-    h('main', { class: 'page stack' },
-      h('div', { class: 'set-name' }, set.name),
-      h('div', { class: 'field' }, 'Learn with',
-        ...boxes.map((b) => h('label', { class: 'card check' }, b, STAGE_NAMES[b.value]))),
-      h('p', { class: 'muted small-text' }, 'Cards go through the checked steps in this order. Applies to the next session; a saved session keeps the steps it started with.')));
 }
 
 // ------------------------------------------------------------------- edit
@@ -456,26 +454,42 @@ const flipKeys = (flip, actions, answer) => (e) => {
   else if (e.key === 'ArrowLeft' || e.key === '1') answer(false);
 };
 
-// Flip a card, then say whether you knew it. Doesn't change the review schedule.
-// The position is saved after every answer so reopening continues where you left off.
-async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
+// Flip through the cards. Per-set options: front side, shuffle, track progress, starred only.
+// With progress tracking you say whether you knew each card and can review the missed ones afterwards.
+// The deck and position are saved after every card so reopening continues where you left off.
+// Doesn't change Learn progress.
+async function flashcardsView(set, cards, back = libraryView) {
   if (!cards.length) return toast('No cards to study');
   const imgs = await imageMap(set.id);
-  const dirPref = store.get('dir', 'def');
-  const key = flashKey(set.id, scope);
+  const key = flashKey(set.id);
+  // Older versions kept one deck per scope ('all' / 'starred'); carry the 'all' one over.
+  const legacy = `flash-${set.id}-all`;
+  if (!store.get(key) && store.get(legacy)) store.set(key, store.get(legacy));
+  store.del(legacy); store.del(`flash-${set.id}-starred`);
+
+  let opts = flashOpts(set);
   let deck = [], pos = 0, missed = [];
+  // 'def' direction = term on the front.
+  const dirFor = () => (opts.front === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : opts.front === 'term' ? 'def' : 'term');
   const exit = () => { keyHandler = null; revoke(imgs); back(); };
   const persist = () => store.set(key, JSON.stringify({
     deck: deck.map((it) => [it.card.id, it.dir]), pos, missed: missed.map((c) => c.id) }));
 
-  const { header, update } = progressHeader(exit);
+  const { header, update } = progressHeader(exit, openOptions);
   const topbar = () => {
     update(Math.round((pos / deck.length) * 100), `${Math.min(pos + 1, deck.length)}/${deck.length}`);
     return header;
   };
 
-  function start(list) {
-    deck = shuffle(list).map((card) => ({ card, dir: dirPref === 'mixed' ? (Math.random() < 0.5 ? 'term' : 'def') : dirPref }));
+  // Cards the options select, in study order (cards come sorted by their position in the set).
+  function pool() {
+    let list = opts.starred ? cards.filter((c) => c.starred) : cards;
+    if (!list.length) { toast('No starred cards yet, showing all'); list = cards; }
+    return opts.shuffle ? shuffle(list) : list;
+  }
+
+  function start(list = pool()) {
+    deck = list.map((card) => ({ card, dir: dirFor() }));
     pos = 0; missed = [];
     persist();
     showCard();
@@ -501,26 +515,53 @@ async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
     const [frontLabel, backLabel] = it.dir === 'def' ? ['Term', 'Definition'] : ['Definition', 'Term'];
     const [front, backSide] = it.dir === 'def' ? [it.card.term, it.card.def] : [it.card.def, it.card.term];
     const actions = h('div', { class: 'actions' });
-    const answer = (knew) => { if (!knew) missed.push(it.card); pos++; persist(); showCard(); };
+    const go = (step) => { pos = Math.max(0, pos + step); persist(); showCard(); };
+    const answer = (knew) => { if (!knew) missed.push(it.card); go(1); };
     const card = flipCard(frontLabel, front, backLabel, backSide, imgs, (flipped) => {
-      if (flipped && !actions.querySelector('.knew')) actions.replaceChildren(knewButtons(answer));
+      if (opts.track && flipped && !actions.querySelector('.knew')) actions.replaceChildren(knewButtons(answer));
     });
 
-    actions.append(h('button', { class: 'btn primary', onclick: card.flip }, 'Flip'));
-    keyHandler = flipKeys(card.flip, actions, answer);
+    if (opts.track) {
+      actions.append(h('button', { class: 'btn primary', onclick: card.flip }, 'Flip'));
+      keyHandler = flipKeys(card.flip, actions, answer);
+    } else {
+      // Just browsing: flip and move back and forth.
+      actions.append(h('div', { class: 'row' },
+        h('button', { class: 'btn', disabled: pos === 0, 'aria-label': 'Previous card', onclick: () => go(-1) }, icon('back')),
+        h('button', { class: 'btn primary grow', onclick: card.flip }, 'Flip'),
+        h('button', { class: 'btn', 'aria-label': 'Next card', onclick: () => go(1) }, icon('chevron'))));
+      keyHandler = (e) => {
+        if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); card.flip(); }
+        else if (e.key === 'ArrowRight') go(1);
+        else if (e.key === 'ArrowLeft' && pos > 0) go(-1);
+      };
+    }
     show(topbar(),
       h('main', { class: 'page stack flash-page' }, card.el, h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
       actions);
   }
 
   function summary() {
+    const done = () => { store.del(key); exit(); };
+    if (!opts.track) {
+      // Nothing to continue once every card has been seen.
+      store.del(key);
+      const restart = h('button', { class: 'btn primary', onclick: () => start() }, 'Restart');
+      keyHandler = (e) => e.key === 'Enter' && restart.click();
+      show(topbar(),
+        h('main', { class: 'page stack center' },
+          h('div', { class: 'big-num' }, `${deck.length}`),
+          h('h2', {}, 'End of the deck'),
+          h('p', { class: 'muted' }, `You went through all ${deck.length} card${deck.length === 1 ? '' : 's'}`)),
+        h('div', { class: 'actions' }, restart, h('button', { class: 'btn ghost', onclick: done }, 'Done')));
+      return;
+    }
     const knew = deck.length - missed.length;
     const again = missed;
     // All known: nothing left to continue. Otherwise keep the summary until Done.
     if (!again.length) store.del(key);
-    const done = () => { store.del(key); exit(); };
     const primary = again.length
-      ? h('button', { class: 'btn primary', onclick: () => start(again) }, `Review ${again.length} missed card${again.length === 1 ? '' : 's'}`)
+      ? h('button', { class: 'btn primary', onclick: () => start(opts.shuffle ? shuffle(again) : again) }, `Review ${again.length} missed card${again.length === 1 ? '' : 's'}`)
       : h('button', { class: 'btn primary', onclick: done }, 'Done');
     keyHandler = (e) => e.key === 'Enter' && primary.click();
     show(topbar(),
@@ -529,14 +570,44 @@ async function flashcardsView(set, cards, back = libraryView, scope = 'all') {
         h('h2', {}, again.length ? 'Round complete' : 'You knew them all'),
         h('p', { class: 'muted' }, `Knew ${knew} of ${deck.length}${again.length ? ` · ${again.length} still learning` : ''}`)),
       h('div', { class: 'actions' }, primary,
-        h('button', { class: 'btn', onclick: () => start(cards) }, `Restart all ${cards.length}`),
+        h('button', { class: 'btn', onclick: () => start() }, 'Restart'),
         again.length ? h('button', { class: 'btn ghost', onclick: done }, 'Done') : null));
+  }
+
+  function openOptions() {
+    const before = { ...opts };
+    const save = () => { set = { ...set, flash: { ...opts } }; saveSetRecord(set).catch(() => toast('Could not save options')); };
+    const box = (label, k) => h('label', { class: 'card check' },
+      h('input', { type: 'checkbox', checked: opts[k], onchange: (e) => { opts[k] = e.target.checked; save(); } }), label);
+    const frontSel = h('select', { onchange: (e) => { opts.front = e.target.value; save(); } },
+      ...[['term', 'Term'], ['def', 'Definition'], ['mixed', 'Both']].map(([v, l]) => h('option', { value: v, selected: opts.front === v }, l)));
+    const starred = cards.filter((c) => c.starred).length;
+    const sheet = optionsSheet('Flashcard options', [
+      h('label', { class: 'field' }, 'Front of the card', frontSel),
+      h('div', { class: 'field' }, 'Options',
+        box('Shuffle', 'shuffle'),
+        box("Track progress (Knew it / Didn't know)", 'track'),
+        box(`Starred only (${starred})`, 'starred')),
+      h('p', { class: 'muted small-text' }, 'Changing Shuffle or Starred only starts the deck over.'),
+      h('button', { class: 'btn', onclick: () => {
+        if (!confirm('Start over from the first card?')) return;
+        sheet.remove(); start();
+      } }, icon('refresh'), 'Start over'),
+    ], () => applyOptions(before));
+  }
+
+  function applyOptions(before) {
+    const rebuild = before.shuffle !== opts.shuffle || before.starred !== opts.starred;
+    if (rebuild && (pos === 0 || pos >= deck.length || confirm('Start the deck over with the new options?'))) return start();
+    // Front side: re-pick the cards that are still to come.
+    if (before.front !== opts.front) { deck.slice(pos).forEach((it) => { it.dir = dirFor(); }); persist(); }
+    if (before.front !== opts.front || before.track !== opts.track) showCard();
   }
 
   if (restore()) {
     if (pos < deck.length) toast(`Continuing at ${pos + 1}/${deck.length}`);
     showCard();
-  } else start(cards);
+  } else start();
 }
 
 // ------------------------------------------------------------------- test
@@ -565,14 +636,14 @@ function testSetupView(set, cards, allCards, back = () => setView(set)) {
       h('label', { class: 'field' }, `Questions (max ${cards.length})`, count),
       h('div', { class: 'field' }, 'Question types',
         ...boxes.map((b) => h('label', { class: 'card check' }, b, TEST_TYPE_NAMES[b.value]))),
-      h('p', { class: 'muted small-text' }, 'Each card is asked once and graded at the end. Tests don\'t change the review schedule.')),
+      h('p', { class: 'muted small-text' }, 'Each card is asked once and graded at the end. Tests don\'t change your Learn progress.')),
     h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: start }, 'Start test')));
 }
 
 // All questions on one page; nothing is marked until the test is submitted.
 async function testView(set, cards, allCards, opts, back) {
   keyHandler = null;
-  const qs = buildTest(cards, allCards, { ...opts, dir: store.get('dir', 'def') });
+  const qs = buildTest(cards, allCards, { ...opts, dir: learnDirOf(set) });
   if (!qs.length) return toast('Not enough cards for these question types');
   const imgs = await imageMap(set.id);
   const answers = new Array(qs.length).fill(null);
@@ -685,33 +756,81 @@ async function testView(set, cards, allCards, opts, back) {
 }
 
 // ------------------------------------------------------------------ study
-async function study(set, mode, resume = false, back = libraryView) {
+// Learn: every card of the set (or the starred ones) goes through the chosen steps until it is mastered.
+// Progress is saved after every step; resume = continue the saved session.
+// starred: learn only the starred cards (default: the set's "Starred only" option).
+async function study(set, resume = false, back = libraryView, opts = {}) {
+  let starred = opts.starred ?? !!set.learnStarred;
   const cards = await db.getCards(set.id);
-  const onCard = (c) => db.putMany('cards', [c]);
   let session = null;
   if (resume) {
-    const saved = await db.getSession(set.id);
-    session = saved && Session.restore(saved, cards, { onCard });
+    const saved = await learnSession(set.id);
+    session = Session.restore(saved, cards);
+    if (saved && typeof saved.starred === 'boolean') starred = saved.starred;
     if (!session) { await db.deleteSession(set.id); toast('Saved session is no longer available'); return back(); }
   }
   const imgs = await imageMap(set.id);
   if (!session) {
-    const pool = buildPool(cards, mode, dayNum());
-    if (!pool.length) { revoke(imgs); toast('Nothing to study'); return back(); }
-    session = new Session(pool, cards, { mode, dir: store.get('dir', 'def'), modes: modesFor(set), onCard });
+    let pool = learnPool(cards, starred);
+    if (!pool.length && starred) { toast('No starred cards yet, learning all'); pool = learnPool(cards); }
+    if (!pool.length) { revoke(imgs); toast('No cards to learn'); return back(); }
+    session = new Session(pool, cards, { dir: learnDirOf(set), modes: modesFor(set) });
   }
-  // Save after every step; a finished session has nothing to resume.
-  const persist = () => (session.finished
-    ? db.deleteSession(set.id)
-    : db.saveSession({ setId: set.id, ...session.toJSON() })).catch(() => {});
+  // A finished session is kept as a small "done" record so the set shows it as mastered.
+  const persist = () => db.saveSession(session.finished
+    ? { setId: set.id, mode: 'learn', done: true, total: session.total, mastered: session.mastered, steps: session.steps, stepsTotal: session.stepsTotal }
+    : { setId: set.id, starred, ...session.toJSON() }).catch(() => {});
   let closed = false;
-  const exit = () => { closed = true; keyHandler = null; revoke(imgs); back(); };
+  const leave = () => { closed = true; keyHandler = null; revoke(imgs); };
+  const exit = () => { leave(); back(); };
+  const restart = () => { leave(); study(set, false, back, { starred }); };
 
-  const { header, update } = progressHeader(exit);
+  const { header, update } = progressHeader(exit, learnOptions);
   const topbar = () => {
     update(Math.round(session.progress * 100), `${session.mastered}/${session.total}`);
     return header;
   };
+
+  // Learn options for this set: answer direction, steps, starred only, plus Start over.
+  // Changes are saved to the set right away and used when Learn starts over.
+  function learnOptions() {
+    const active = modesFor(set);
+    const save = (patch) => { set = { ...set, ...patch }; saveSetRecord(set).catch(() => toast('Could not save options')); };
+    let changed = false;
+    const boxes = STAGES.map((st) => h('input', { type: 'checkbox', value: st, checked: active.includes(st), onchange: (e) => {
+      const stages = boxes.filter((b) => b.checked).map((b) => b.value);
+      if (!stages.length) { e.target.checked = true; return toast('Pick at least one'); }
+      save({ stages });
+      // Apply to the running session too, so e.g. a newly ticked Flashcards step shows up right away.
+      if (session.setModes(modesFor(set))) { changed = true; persist(); }
+    } }));
+    const starredCount = cards.filter((c) => c.starred).length;
+    const rerender = () => {
+      if (!changed || closed || session.finished) return;
+      if (session.roundDone) roundSummary(); else question();
+    };
+    const sheet = optionsSheet('Learn options', [
+      h('label', { class: 'field' }, 'Answer with', dirSelect(learnDirOf(set), (learnDir) => {
+        save({ learnDir });
+        session.dir = learnDir;
+        persist();
+      })),
+      h('div', { class: 'field' }, 'Steps',
+        ...boxes.map((b) => h('label', { class: 'card check' }, b, STAGE_NAMES[b.value]))),
+      h('div', { class: 'field' }, 'Cards',
+        h('label', { class: 'card check' },
+          h('input', { type: 'checkbox', checked: starred, onchange: (e) => { starred = e.target.checked; save({ learnStarred: starred }); } }),
+          `Starred only (${starredCount})`)),
+      h('p', { class: 'muted small-text' },
+        'Cards go through the checked steps in this order. Steps apply right away, the answer direction from the next round, Starred only when you start over.'),
+      h('button', { class: 'btn', onclick: async () => {
+        if (!confirm('Start over? Your progress in Learn will be lost.')) return;
+        sheet.remove();
+        await db.deleteSession(set.id);
+        restart();
+      } }, icon('refresh'), 'Start over'),
+    ], rerender);
+  }
 
   // Fix a typo in the current card without leaving the session.
   function editCurrent(it) {
@@ -767,10 +886,11 @@ async function study(set, mode, resume = false, back = libraryView) {
     persist();
     show(topbar(),
       h('main', { class: 'page stack center' },
-        h('div', { class: 'big-num' }, `${session.perfect}/${session.total}`), h('h2', {}, 'Session complete'),
-        h('p', {}, `${session.total} cards studied · ${session.perfect} correct first time`),
-        mode === 'learn' ? h('p', { class: 'muted' }, 'Your next reviews have been scheduled.') : null),
-      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: exit }, 'Done')));
+        h('div', { class: 'big-num' }, `${session.perfect}/${session.total}`), h('h2', {}, 'All cards mastered'),
+        h('p', {}, `${session.total} cards learned · ${session.perfect} correct first time`)),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: exit }, 'Done'),
+        h('button', { class: 'btn', onclick: restart }, icon('refresh'), 'Learn again')));
   }
 
   function question() {

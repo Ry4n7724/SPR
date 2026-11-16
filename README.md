@@ -1,24 +1,24 @@
 # Spaced Cards
 
-A small spaced-repetition app in the style of Quizlet's **Learn** mode. It is a static site (no build, no server), so it runs on GitHub Pages. It is designed for phones first and can be installed to the home screen (works offline).
+A small flashcard app in the style of Quizlet's **Learn** mode. It is a static site (no build, no server), so it runs on GitHub Pages. It is designed for phones first and can be installed to the home screen (works offline).
 
 ## Using it
 
 1. **Export from Quizlet**: open a set → `⋯` → *Export*. Keep the defaults (Tab between term and definition, new line between cards) and copy the text, or save it as a `.txt` file.
 2. In the app tap **+ Import** and either choose the file or paste the text. A preview shows the cards it found. Pick other separators if you used custom ones.
-3. Tap **Learn** on a set. Cards that are due (plus up to 15 new ones) come in rounds of 7: first multiple choice, then typing the answer. A wrong typed answer has to be retyped correctly before you can continue. Misses come back until you get them right. Finished cards are scheduled for later days (1 → 3 → longer, SM-2 style). **Practice all** studies everything without changing the schedule.
+3. Tap **Learn** on a set. All cards of the set come in rounds of 7: first multiple choice, then typing the answer. A wrong typed answer has to be retyped correctly before you can continue. Misses come back until you get them right, until every card is mastered.
 
-Each set on the library screen shows how much of it is learned. Tapping a set opens its page with **Flashcards**, **Learn** (or **Resume**), **Practice all**, **Test**, **Cards**, **Starred** and **Settings** tiles, plus **Edit** and **Delete** buttons underneath.
-
-"Answer with" on the library screen picks whether you are asked for the definition, the term, or both.
+Each set on the library screen shows how far its Learn session is. Tapping a set opens its page with **Learn** (or **Continue learning**), **Flashcards**, **Test**, **Cards** and **Starred** tiles, plus **Edit** and **Delete** buttons underneath.
 
 ### Flashcards
 
-Tap **Flashcards** on the set page (or in the card list, where it follows the All/Starred filter). Tap the card to flip it, then choose **Knew it** or **Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change the review schedule.
+Tap **Flashcards** on the set page or in the card list. Tap the card to flip it, then choose **Knew it** or **Didn't know**. At the end you can review just the cards you missed. On a keyboard: Space flips, → knew it, ← didn't know. Flashcards don't change your Learn progress, and your place in the deck is saved.
+
+The gear in the top bar opens the flashcard options for the set: which side is on the front (term, definition or both), **Shuffle**, **Track progress** (turn it off to just flip and page through with ‹ ›), **Starred only**, and **Start over**.
 
 ### Test
 
-Tap **Test** on the set page (or in the card list, where it follows the All/Starred filter). Choose how many questions and which kinds: True/False, Multiple choice and Written. All questions are on one page and nothing is marked until you tap **Submit test**. The results show your score and the correct answer for every miss; tap **I was right** on a written answer that should count. **Retake missed** tests only the cards you got wrong. Tests don't change the review schedule.
+Tap **Test** on the set page. Choose how many questions and which kinds: True/False, Multiple choice and Written. All questions are on one page and nothing is marked until you tap **Submit test**. The results show your score and the correct answer for every miss; tap **I was right** on a written answer that should count. **Retake missed** tests only the cards you got wrong. Tests don't change your Learn progress.
 
 ### Images
 
@@ -30,17 +30,17 @@ Quizlet's export has no images, so add them yourself in one of these ways:
 
 Try `sample/sample.txt` (text only) and `sample/shapes.zip` (with images).
 
-### Set settings and resuming
+### Learn options and resuming
 
-Tap **Settings** on the set page to choose its learn mode: multiple choice then written (default), multiple choice only, or written only. It applies to the next session.
+In Learn, the gear in the top bar opens the options for the set: **Answer with** (definition, term or both), which steps cards go through (flashcards, multiple choice, written) and **Starred only**. Step changes apply right away (a newly ticked Flashcards step shows on the next card), the answer direction from the next round, and Starred only when you start over. Test uses the same answer direction.
 
 While studying, tap the pencil on the question to fix the current card's term or definition.
 
-Progress is saved after every answer. If you close a session or the app, the set shows **Resume** (with progress) and **Start over** next time.
+Learn saves its progress after every answer. If you close it or the app, the set shows **Continue learning** next time. To begin again from scratch, use **Start over** in the Learn options (it asks first), or **Learn again** once every card is mastered.
 
 ### Viewing and starring cards
 
-Tap **Cards** on the set page to see all cards with their definitions and images. Tap the star to star a card, switch between **All** and **Starred**, and tap **Learn starred** to study only the starred cards. The **Starred** tile opens the list already filtered. You can also star the current card while studying. Starred sessions don't change the review schedule.
+Tap **Cards** on the set page to see all cards with their definitions and images. Tap the star to star a card, and switch between **All** and **Starred**. **Learn** there starts a new Learn session with the cards shown: all of them, or only the starred ones when **Starred** is selected (if a Learn session is in progress it asks before replacing it). The **Starred** tile opens the list already filtered. You can also star the current card while studying. To learn only the starred cards, turn on **Starred only** in the Learn or Flashcards options.
 
 ### Editing a set
 
