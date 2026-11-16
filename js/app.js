@@ -717,24 +717,27 @@ async function study(set, mode, resume = false, back = libraryView) {
           window.scrollTo(0, document.body.scrollHeight);
           return;
         }
-        // Wrong answers must be retyped correctly before moving on.
+        // Wrong answers must be retyped correctly; it moves on by itself once the retype matches.
         const retype = h('input', { type: 'text', class: 'answer', placeholder: 'Type the correct answer',
           autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'done' });
-        const cont = h('button', { class: 'btn primary', disabled: true, onclick: () => tryContinue() }, 'Continue');
-        const tryContinue = () => {
-          if (session.check(it, retype.value)) return proceed(false);
+        let done = false;
+        retype.addEventListener('input', () => {
+          if (done) return;
+          retype.classList.remove('bad');
+          if (!session.check(it, retype.value)) return;
+          done = true;
+          retype.disabled = true;
+          retype.classList.add('ok');
+          proceed(false);
+        });
+        retype.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault(); e.stopPropagation();
           retype.classList.add('bad');
           navigator.vibrate && navigator.vibrate(60);
-        };
-        retype.addEventListener('input', () => {
-          const ok = session.check(it, retype.value);
-          cont.disabled = !ok;
-          retype.classList.toggle('ok', ok);
-          retype.classList.remove('bad');
         });
-        retype.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tryContinue(); } });
         stage.append(h('div', { class: 'label' }, 'Retype the correct answer'), retype);
-        actions.replaceChildren(...[cont, rightBtn].filter(Boolean));
+        actions.replaceChildren(...[rightBtn].filter(Boolean));
         keyHandler = null;
         window.scrollTo(0, document.body.scrollHeight);
         setTimeout(() => retype.focus({ preventScroll: true }), 50);
