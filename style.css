@@ -90,13 +90,16 @@ textarea { resize: vertical; min-height: 120px; }
 .check input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--red); }
 
 /* study */
-/* The progress track is a strip of 6px "LEDs": the mask cuts the bar into dots, the white fill lights them up. */
+/* The progress track is a strip of 6px "LEDs": unlit dots in the track, lit dots in the fill (same pattern, both start at x=0).
+   Drawn with backgrounds, not a CSS mask: iOS Safari can skip painting masked elements inside the composited top bar. */
 .progress, .stat-strip {
-  flex: 1; height: 6px; background: var(--line); overflow: hidden;
-  -webkit-mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 10px);
-  mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 10px);
+  flex: 1 1 0; min-width: 40px; height: 6px; overflow: hidden;
+  background: repeating-linear-gradient(90deg, var(--line) 0 6px, transparent 6px 10px);
 }
-.progress > div, .stat-strip > div { height: 100%; background: #fff; transition: width .3s; }
+.progress > div, .stat-strip > div {
+  height: 100%; transition: width .3s;
+  background: repeating-linear-gradient(90deg, #fff 0 6px, transparent 6px 10px);
+}
 .count { min-width: 44px; text-align: right; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
 .label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
 .prompt { min-height: 110px; font-size: 22px; font-weight: 500; text-align: center; }
@@ -213,6 +216,7 @@ input.answer { border-width: 1px; }
 .flash-page { display: flex; }
 /* Flashcard views fit the viewport so the top bar and actions never scroll away (iOS Safari). */
 #app:has(.flash-page, .study-flip) { height: 100vh; height: 100dvh; min-height: 0; }
+#app > .topbar, #app > .actions { flex: none; } /* never squeezed by the fixed height; the card gives way instead */
 .flash-page, .study-flip { min-height: 0; }
 .flip { flex: 1; display: flex; perspective: 1200px; cursor: pointer; outline: none; min-height: 0; position: relative; z-index: 0; isolation: isolate; }
 .flip-inner { flex: 1; display: grid; min-height: 0; transition: transform .5s cubic-bezier(.2, .8, .2, 1); transform-style: preserve-3d; }
