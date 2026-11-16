@@ -442,6 +442,49 @@ function flipCard(frontLabel, front, backLabel, back, imgs, onFlip = () => {}) {
   return { el, flip };
 }
 
+// Star toggle for the card in getCard(). Saves it, then calls onChange(updatedCard).
+function starButton(getCard, onChange) {
+  const btn = h('button', { class: 'icon star-card', 'aria-label': 'Star card' });
+  const paint = (c) => { btn.replaceChildren(icon(c.starred ? 'starFill' : 'star')); btn.classList.toggle('on', !!c.starred); };
+  btn.onclick = async () => {
+    const card = { ...getCard(), starred: !getCard().starred };
+    paint(card);
+    onChange(card);
+    await db.putMany('cards', [card]);
+  };
+  paint(getCard());
+  return btn;
+}
+
+// Modal to fix a card's term/definition. Saves it, calls onSave(updatedCard), then onClose().
+function editCardModal(card, imgs, onSave, onClose) {
+  const names = new Set(imgs.keys());
+  const mk = (label, val) => {
+    const ta = h('textarea', { rows: 3, spellcheck: 'false', 'aria-label': label });
+    ta.value = val;
+    return [h('label', { class: 'field' }, label, ta), ta];
+  };
+  const [termEl, termTa] = mk('Term', card.term);
+  const [defEl, defTa] = mk('Definition', card.def);
+  const close = () => { box.remove(); onClose(); };
+  const save = async () => {
+    const term = normalizeSide(termTa.value, names), def = normalizeSide(defTa.value, names);
+    if (!term || !def) return toast('Term and definition cannot be empty');
+    const updated = { ...card, term, def };
+    await db.putMany('cards', [updated]);
+    onSave(updated);
+    toast('Card saved');
+    close();
+  };
+  const box = h('div', { class: 'modal' },
+    h('div', { class: 'card stack modal-body' }, h('div', { class: 'handle' }), h('h2', {}, 'Edit card'), termEl, defEl,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: save }, 'Save'))));
+  document.body.append(box);
+  termTa.focus();
+}
+
 const knewButtons = (answer) => h('div', { class: 'row' },
   h('button', { class: 'btn missed', onclick: () => answer(false) }, icon('x'), "Didn't know"),
   h('button', { class: 'btn knew', onclick: () => answer(true) }, icon('check'), 'Knew it'));
@@ -520,6 +563,11 @@ async function flashcardsView(set, cards, back = libraryView) {
     const card = flipCard(frontLabel, front, backLabel, backSide, imgs, (flipped) => {
       if (opts.track && flipped && !actions.querySelector('.knew')) actions.replaceChildren(knewButtons(answer));
     });
+    const starBtn = starButton(() => it.card, replaceCard);
+    const editBtn = h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => {
+      keyHandler = null;
+      editCardModal(it.card, imgs, replaceCard, showCard);
+    } }, icon('pencil'));
 
     if (opts.track) {
       actions.append(h('button', { class: 'btn primary', onclick: card.flip }, 'Flip'));
@@ -537,8 +585,17 @@ async function flashcardsView(set, cards, back = libraryView) {
       };
     }
     show(topbar(),
-      h('main', { class: 'page stack flash-page' }, card.el, h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
+      h('main', { class: 'page stack flash-page' }, h('div', { class: 'flip-tools' }, starBtn, editBtn), card.el,
+        h('p', { class: 'muted small-text center' }, 'Tap the card to flip it')),
       actions);
+  }
+
+  // Swap in an edited/starred card everywhere this view holds it.
+  function replaceCard(card) {
+    const swap = (c) => (c.id === card.id ? card : c);
+    deck.forEach((it) => { it.card = swap(it.card); });
+    missed = missed.map(swap);
+    cards = cards.map(swap);
   }
 
   function summary() {
@@ -832,37 +889,18 @@ async function study(set, resume = false, back = libraryView, opts = {}) {
     ], rerender);
   }
 
+  // Swap in an edited/starred card for the current item and the set's card list.
+  function updateCard(it, card) {
+    it.card = card;
+    const i = cards.findIndex((c) => c.id === card.id);
+    if (i >= 0) cards[i] = card;
+    persist();
+  }
+
   // Fix a typo in the current card without leaving the session.
   function editCurrent(it) {
     keyHandler = null;
-    const names = new Set(imgs.keys());
-    const mk = (label, val) => {
-      const ta = h('textarea', { rows: 3, spellcheck: 'false', 'aria-label': label });
-      ta.value = val;
-      return [h('label', { class: 'field' }, label, ta), ta];
-    };
-    const [termEl, termTa] = mk('Term', it.card.term);
-    const [defEl, defTa] = mk('Definition', it.card.def);
-    const close = () => { box.remove(); question(); };
-    const save = async () => {
-      const term = normalizeSide(termTa.value, names), def = normalizeSide(defTa.value, names);
-      if (!term || !def) return toast('Term and definition cannot be empty');
-      const card = { ...it.card, term, def };
-      it.card = card;
-      const i = cards.findIndex((c) => c.id === card.id);
-      if (i >= 0) cards[i] = card;
-      await db.putMany('cards', [card]);
-      persist();
-      toast('Card saved');
-      close();
-    };
-    const box = h('div', { class: 'modal' },
-      h('div', { class: 'card stack modal-body' }, h('div', { class: 'handle' }), h('h2', {}, 'Edit card'), termEl, defEl,
-        h('div', { class: 'row' },
-          h('button', { class: 'btn', onclick: close }, 'Cancel'),
-          h('button', { class: 'btn primary', onclick: save }, 'Save'))));
-    document.body.append(box);
-    termTa.focus();
+    editCardModal(it.card, imgs, (card) => updateCard(it, card), question);
   }
 
   function nextRound() {
@@ -900,18 +938,7 @@ async function study(set, resume = false, back = libraryView, opts = {}) {
     const label = it.dir === 'def' ? 'Term' : 'Definition';
     const answerLabel = it.dir === 'def' ? 'Definition' : 'Term';
     const answer = session.answer(it);
-    const starBtn = h('button', { class: 'icon star-card', 'aria-label': 'Star card' }, icon(it.card.starred ? 'starFill' : 'star'));
-    starBtn.onclick = async () => {
-      const card = { ...it.card, starred: !it.card.starred };
-      it.card = card;
-      const i = cards.findIndex((c) => c.id === card.id);
-      if (i >= 0) cards[i] = card;
-      starBtn.replaceChildren(icon(card.starred ? 'starFill' : 'star'));
-      starBtn.classList.toggle('on', !!card.starred);
-      await db.putMany('cards', [card]);
-      persist();
-    };
-    starBtn.classList.toggle('on', !!it.card.starred);
+    const starBtn = starButton(() => it.card, (card) => updateCard(it, card));
     const editBtn = h('button', { class: 'icon edit-card', 'aria-label': 'Edit card', onclick: () => editCurrent(it) }, icon('pencil'));
     const stage = h('div', { class: 'stage' });
     const actions = h('div', { class: 'actions' });
