@@ -105,7 +105,8 @@ textarea { resize: vertical; min-height: 120px; }
 .prompt { min-height: 110px; font-size: 22px; font-weight: 500; text-align: center; }
 .side { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
 .side .txt { white-space: pre-wrap; word-break: break-word; max-width: 100%; }
-.side img { max-width: 100%; max-height: 28vh; max-height: 28dvh; object-fit: contain; border-radius: 10px; }
+/* Fixed height so small uploads scale up too; object-fit keeps the aspect ratio. */
+.side img { width: auto; max-width: 100%; height: 28vh; height: 28dvh; object-fit: contain; border-radius: 10px; }
 .opts { display: flex; flex-direction: column; gap: 10px; }
 .opt {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 14px; text-align: left;
@@ -113,7 +114,7 @@ textarea { resize: vertical; min-height: 120px; }
 }
 .opt:hover:not(:disabled) { background: var(--card-2); }
 .opt .side { align-items: flex-start; }
-.opt .side img { max-height: 16vh; max-height: 16dvh; }
+.opt .side img { height: 16vh; height: 16dvh; }
 .opt .num {
   flex: none; width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line-2);
   color: var(--muted); font-size: 12px; display: grid; place-items: center;
@@ -147,12 +148,12 @@ input.answer { border-width: 1px; }
 .ok-pill { color: var(--ok); border-color: var(--ok); }
 .bad-pill { color: var(--bad); border-color: var(--bad); }
 .preview { display: flex; flex-direction: column; gap: 8px; }
-.prev-card .side img { max-height: 90px; }
+.prev-card .side img { height: 90px; }
 .prev-card { font-size: 14px; }
 .big-num { font-size: 56px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 
 .lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .8); display: grid; place-items: center; padding: 16px; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lightbox img { width: 100%; height: 100%; object-fit: contain; }
 .zoomable { cursor: zoom-in; }
 .toast {
   position: fixed; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%); z-index: 60;
@@ -166,7 +167,7 @@ input.answer { border-width: 1px; }
 .edit-field { display: flex; flex-direction: column; gap: 6px; }
 .edit-label { align-items: center; gap: 8px; }
 .edit-prev:empty { display: none; }
-.edit-prev img { max-height: 90px; }
+.edit-prev img { height: 90px; }
 
 /* card list + stars */
 .clickable { cursor: pointer; }
@@ -179,7 +180,7 @@ input.answer { border-width: 1px; }
 .seg-btn.on { color: var(--text); box-shadow: inset 0 -2px var(--red); }
 .term-row { display: flex; align-items: flex-start; gap: 8px; }
 .term-row .side { align-items: flex-start; }
-.term-row .side img { max-height: 90px; }
+.term-row .side img { height: 90px; }
 .term-row .def { color: var(--muted); font-size: 14px; }
 .term-row hr { margin: 8px 0; }
 .star { color: var(--muted); flex: none; }
