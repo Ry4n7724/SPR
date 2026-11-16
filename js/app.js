@@ -36,7 +36,7 @@ document.addEventListener('keydown', (e) => keyHandler && keyHandler(e));
 // Tap any image to see it fullscreen.
 document.addEventListener('click', (e) => {
   const img = e.target.closest && e.target.closest('img.zoomable');
-  if (!img) return;
+  if (!img || img.closest('.side-prev')) return;
   const box = h('div', { class: 'lightbox', onclick: () => box.remove() }, h('img', { src: img.src, alt: '' }));
   document.body.append(box);
 });
@@ -328,6 +328,31 @@ function importView() {
       fileIn, text, name, termSel.el, cardSel.el, info, preview, saveBtn));
 }
 
+// One side of a card: shows the rendered preview; tap it to edit the text, click away to preview again.
+// imgs() returns the current image map; onInput(text) runs as the text changes.
+function sideEditor(value, label, imgs, onInput = () => {}) {
+  const ta = h('textarea', { rows: 2, spellcheck: 'false', 'aria-label': label, hidden: true });
+  ta.value = value;
+  const prev = h('div', { class: 'side-prev', role: 'button', tabindex: 0, 'aria-label': `Edit ${label.toLowerCase()}` });
+  const paint = () => {
+    const shown = ta.value.trim();
+    prev.classList.toggle('empty', !shown);
+    prev.replaceChildren(shown ? renderSide(ta.value, imgs()) : `Tap to add ${label.toLowerCase()}`);
+  };
+  const fit = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
+  const edit = () => {
+    prev.hidden = true; ta.hidden = false; fit();
+    ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  };
+  prev.onclick = edit;
+  prev.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } };
+  ta.oninput = () => { fit(); onInput(ta.value); };
+  ta.onblur = () => { paint(); ta.hidden = true; prev.hidden = false; };
+  ta.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); ta.blur(); } };
+  paint();
+  return { el: h('div', { class: 'side-edit' }, prev, ta), ta, edit };
+}
+
 // ------------------------------------------------------------------- edit
 async function editView(set) {
   keyHandler = null;
@@ -363,14 +388,9 @@ async function editView(set) {
   }
 
   function draw() {
-    const map = imgMap();
     list.replaceChildren(...rows.filter((r) => !r.deleted).map((row) => {
       const field = (side, label) => {
-        const prev = h('div', { class: 'edit-prev' }, renderSide(row[side], map));
-        const ta = h('textarea', { rows: 2, spellcheck: 'false', 'aria-label': label, oninput: (e) => {
-          row[side] = e.target.value; dirty = true; prev.replaceChildren(renderSide(row[side], imgMap()));
-        } });
-        ta.value = row[side];
+        const ed = sideEditor(row[side], label, imgMap, (v) => { row[side] = v; dirty = true; });
         const hasImg = /\[img:[^\]]+\]/i.test(row[side]);
         const removeImage = () => {
           row[side] = row[side].replace(/\[img:[^\]]+\]/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -380,7 +400,7 @@ async function editView(set) {
           h('div', { class: 'row edit-label' }, h('span', { class: 'label grow' }, label),
             h('button', { class: 'btn small', type: 'button', onclick: () => pickImage(row, side) }, icon('image'), hasImg ? 'Change image' : 'Image'),
             hasImg ? h('button', { class: 'btn small', type: 'button', onclick: removeImage }, icon('x'), 'Remove image') : null),
-          ta, prev);
+          ed.el);
       };
       return h('div', { class: 'card stack' },
         field('term', 'Term'), field('def', 'Definition'),
@@ -460,9 +480,8 @@ function starButton(getCard, onChange) {
 function editCardModal(card, imgs, onSave, onClose) {
   const names = new Set(imgs.keys());
   const mk = (label, val) => {
-    const ta = h('textarea', { rows: 3, spellcheck: 'false', 'aria-label': label });
-    ta.value = val;
-    return [h('label', { class: 'field' }, label, ta), ta];
+    const ed = sideEditor(val, label, () => imgs);
+    return [h('div', { class: 'field' }, label, ed.el), ed.ta];
   };
   const [termEl, termTa] = mk('Term', card.term);
   const [defEl, defTa] = mk('Definition', card.def);
@@ -482,7 +501,6 @@ function editCardModal(card, imgs, onSave, onClose) {
         h('button', { class: 'btn', onclick: close }, 'Cancel'),
         h('button', { class: 'btn primary', onclick: save }, 'Save'))));
   document.body.append(box);
-  termTa.focus();
 }
 
 const knewButtons = (answer) => h('div', { class: 'row' },

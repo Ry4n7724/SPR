@@ -166,8 +166,17 @@ input.answer { border-width: 1px; }
 .row.tight { gap: 0; }
 .edit-field { display: flex; flex-direction: column; gap: 6px; }
 .edit-label { align-items: center; gap: 8px; }
-.edit-prev:empty { display: none; }
-.edit-prev img { height: 90px; }
+.side-edit { letter-spacing: 0; text-transform: none; color: var(--text); font-size: 16px; }
+.side-edit textarea { min-height: 48px; resize: none; overflow: hidden; }
+.side-prev {
+  min-height: 48px; padding: 12px 14px; border-radius: var(--r-input); border: 1px solid var(--line);
+  background: var(--card); cursor: text;
+}
+.side-prev:hover, .side-prev:focus-visible { border-color: var(--line-2); outline: none; }
+.side-prev.empty { color: var(--muted); }
+.side-prev .side { align-items: flex-start; }
+.side-prev .side img { height: 90px; cursor: text; }
+.side-prev[hidden], .side-edit textarea[hidden] { display: none; }
 
 /* card list + stars */
 .clickable { cursor: pointer; }
